@@ -46,19 +46,52 @@ export async function signedUrl(key: string, options: SignedUrlOptions = {}): Pr
 	return `${env.APP_URL}/api/files/${encoded}?${query}`;
 }
 
+/** Checks the `exp` and `sig` of a signed URL against the payload it should carry. */
+async function verifySignature(url: URL, payload: (expires: number) => string): Promise<boolean> {
+	const expires = Number(url.searchParams.get("exp"));
+	const signature = url.searchParams.get("sig") ?? "";
+	if (!Number.isFinite(expires) || expires < Date.now() / 1000) return false;
+	const expected = await sign(payload(expires));
+	if (expected.length !== signature.length) return false;
+	let diff = 0;
+	for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+	return diff === 0;
+}
+
 /** Returns the object key if the signed URL is valid and unexpired. */
 export async function verifySignedUrl(url: URL): Promise<string | null> {
 	const encoded = url.pathname.split("/").pop() ?? "";
-	const expires = Number(url.searchParams.get("exp"));
-	const signature = url.searchParams.get("sig") ?? "";
-	if (!encoded || !Number.isFinite(expires) || expires < Date.now() / 1000) return null;
-	const expected = await sign(`${encoded}.${expires}`);
-	if (expected.length !== signature.length) return null;
-	let diff = 0;
-	for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
-	if (diff !== 0) return null;
+	if (!encoded || !(await verifySignature(url, (expires) => `${encoded}.${expires}`))) return null;
 	try {
 		return base64Url.decode(encoded);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * A time-limited URL that adds files to one project on behalf of the user who
+ * asked for it, with no sign-in. It can only upload: it cannot read, list or
+ * delete anything. The `upload:` prefix keeps these signatures from ever
+ * matching a download link's.
+ */
+export async function signedUploadUrl(projectId: string, userId: string, expiresIn: number): Promise<{ url: string; expiresAt: Date }> {
+	const expires = Math.floor(Date.now() / 1000) + expiresIn;
+	const grant = base64Url.encode(`${projectId}:${userId}`);
+	const signature = await sign(`upload:${grant}.${expires}`);
+	return {
+		url: `${env.APP_URL}/api/uploads/${grant}?${new URLSearchParams({ exp: String(expires), sig: signature })}`,
+		expiresAt: new Date(expires * 1000),
+	};
+}
+
+/** The project and user a signed upload URL was issued for, if it is valid and unexpired. */
+export async function verifyUploadUrl(url: URL): Promise<{ projectId: string; userId: string } | null> {
+	const grant = url.pathname.split("/").pop() ?? "";
+	if (!grant || !(await verifySignature(url, (expires) => `upload:${grant}.${expires}`))) return null;
+	try {
+		const [projectId, userId] = base64Url.decode(grant).split(":");
+		return projectId && userId ? { projectId, userId } : null;
 	} catch {
 		return null;
 	}
