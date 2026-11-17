@@ -11,7 +11,7 @@
  */
 import { type BrandKit, DEFAULTS, resolveTheme } from "./brand.ts";
 import type { SpokenWord } from "./narration.ts";
-import type { Scene, SceneVisual, Storyboard } from "./storyboard.ts";
+import { type Scene, type SceneVisual, type Storyboard, iconName } from "./storyboard.ts";
 import {
 	TIMELINE_VERSION,
 	type SceneType,
@@ -19,6 +19,7 @@ import {
 	type TimelineAudio,
 	type TimelineBackground,
 	type TimelineCaption,
+	type TimelineIcon,
 	type TimelineScene,
 } from "./timeline.ts";
 
@@ -28,13 +29,22 @@ export interface ComposeAsset {
 	ready: boolean;
 	durationSec?: number;
 	words?: SpokenWord[];
+	contentType?: string;
+	/** Icons: true when the icon is a single-colour glyph that takes the scene's colours. */
+	mono?: boolean;
 }
 
+type Ref = { assetId: string; hash: string };
+
 export interface ResolvedRefs {
-	narration: Record<string, { assetId: string; hash: string }>;
-	visual: Record<string, { assetId: string; hash: string }>;
-	sfx: Record<string, { assetId: string; hash: string }>;
-	music?: { assetId: string; hash: string };
+	narration: Record<string, Ref>;
+	visual: Record<string, Ref>;
+	sfx: Record<string, Ref>;
+	music?: Ref;
+	/** `prefix:name` → icon file */
+	icons?: Record<string, Ref>;
+	/** scene id → the scene picture's subject, cut out */
+	cutout?: Record<string, Ref>;
 }
 
 export interface ComposeInput {
@@ -77,6 +87,8 @@ const LAYOUT_DEFAULTS: Record<SceneType, TimelineScene["layout"]> = {
 	quote: { align: "center", textPosition: "center", mediaSide: "right" },
 	stat: { align: "center", textPosition: "center", mediaSide: "right" },
 	split: { align: "left", textPosition: "center", mediaSide: "right" },
+	chart: { align: "left", textPosition: "center", mediaSide: "right" },
+	map: { align: "left", textPosition: "top", mediaSide: "right" },
 	outro: { align: "center", textPosition: "center", mediaSide: "right" },
 };
 
@@ -94,10 +106,11 @@ function findCue(words: SpokenWord[], cue: string, from: number): number {
 }
 
 function countWords(scene: Scene): number {
-	const text = scene.text;
-	if (!text) return 0;
+	const text = scene.text ?? {};
 	const parts = [text.kicker, text.heading, text.subheading, text.body, text.quote, text.attribution, text.stat?.label, text.cta?.text];
 	for (const bullet of text.bullets ?? []) parts.push(bullet.text);
+	for (const point of scene.chart?.data ?? []) parts.push(point.label);
+	for (const place of scene.map?.places ?? []) parts.push(place.name);
 	return parts.filter(Boolean).join(" ").split(/\s+/).filter(Boolean).length;
 }
 
@@ -119,6 +132,17 @@ function captionCues(words: SpokenWord[], maxWords: number): SpokenWord[][] {
 	return cues;
 }
 
+/** Relative luminance of a #rgb / #rrggbb colour (0 black … 1 white). */
+function luminance(hex: string): number {
+	const raw = hex.replace("#", "");
+	const full = raw.length === 3 ? [...raw].map((c) => c + c).join("") : raw.slice(0, 6);
+	const channel = (i: number) => {
+		const v = parseInt(full.slice(i, i + 2), 16) / 255;
+		return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+	};
+	return /^[0-9a-f]{6}$/i.test(full) ? 0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4) : 1;
+}
+
 export function composeTimeline(input: ComposeInput): ComposeResult {
 	const { storyboard, brand, resolved, assets, draft = false } = input;
 	const errors: string[] = [];
@@ -138,6 +162,16 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 
 	const theme = resolveTheme({ ...brand, captions: { ...brand.captions, ...storyboard.captions } }, (id) => (ready(id) ? src(id) : undefined));
 	const captionSettings = { ...brand.captions, ...storyboard.captions };
+
+	/** An icon named in the storyboard, once its file exists. Icons are decoration: a missing one is left out. */
+	const icon = (name: string | undefined, label: string): TimelineIcon | undefined => {
+		if (!name) return undefined;
+		const key = iconName(name, brand.visual?.iconSet);
+		const asset = ready(resolved.icons?.[key]?.assetId, ["image"]);
+		if (asset) return { src: src(asset.id), mono: asset.mono ?? true };
+		if (!draft) warnings.push(`${label}: icon "${key}" is not available and was left out`);
+		return undefined;
+	};
 	const maxCaptionWords = captionSettings.maxWordsPerLine ?? DEFAULTS.captionWords;
 
 	const scenes: TimelineScene[] = [];
@@ -190,7 +224,16 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 			const clip = background.kind === "video" ? ready(background.src.replace("asset://", "")) : undefined;
 			const clipSec = clip?.durationSec ? clip.durationSec - (background.kind === "video" ? background.startFromSec : 0) : 0;
 			const readingSec = 1.4 + countWords(scene) / 2.6;
-			const typeSec = scene.type === "outro" ? 4 : scene.type === "title" ? 3 : 2.5;
+			const typeSec =
+				scene.type === "outro"
+					? 4
+					: scene.type === "title"
+						? 3
+						: scene.type === "chart"
+							? 3 + (scene.chart?.data.length ?? 0) * 0.3
+							: scene.type === "map"
+								? 2.5 + (scene.map?.places.length ?? 1) * (scene.map?.camera === "tour" ? 1.8 : 0.4)
+								: 2.5;
 			seconds = clipSec > 0 ? Math.min(clipSec, 8) : Math.max(typeSec, readingSec);
 			seconds = Math.min(Math.max(minSeconds, seconds), maxSeconds);
 		}
@@ -247,32 +290,74 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 			});
 		}
 
-		// --- bullets, cued to the voice --------------------------------------
-		const bullets = scene.text?.bullets;
-		let timedBullets: { text: string; atFrame: number }[] | undefined;
-		if (bullets?.length) {
+		// --- bullets, chart values and map places, cued to the voice -------------
+		/**
+		 * Frame (scene-relative) each item appears on. An item with a cue lands on
+		 * the first word of its cue; the rest are spaced out: `"narration"` spreads
+		 * them across the whole voice-over (bullets, a map tour), `"brisk"` reveals
+		 * them one after another early in the scene (chart values, map pins).
+		 */
+		const cueFrames = (items: { cue?: string }[], what: string, pacing: "narration" | "brisk"): number[] => {
 			let searchFrom = 0;
 			let previous = -1;
-			timedBullets = bullets.map((bullet, i) => {
+			const n = items.length;
+			return items.map((item, i) => {
 				let atSec: number | undefined;
-				if (bullet.cue && words.length) {
-					const found = findCue(words, bullet.cue, searchFrom);
+				if (item.cue && words.length) {
+					const found = findCue(words, item.cue, searchFrom);
 					if (found >= 0) {
 						atSec = leadIn + words[found]![1] - 0.12;
 						searchFrom = found + 1;
 					} else {
-						warnings.push(`${label}: bullet ${i + 1} cue "${bullet.cue}" was not found in the narration; it is spaced evenly instead`);
+						warnings.push(`${label}: ${what} ${i + 1} cue "${item.cue}" was not found in the narration; it is spaced evenly instead`);
 					}
 				}
 				if (atSec === undefined) {
-					atSec = hasVoice
-						? leadIn + (narrationSec * i) / bullets.length
-						: 0.4 + (Math.max(0.5, seconds - 1.2) * i) / bullets.length;
+					if (pacing === "narration") {
+						atSec = hasVoice ? leadIn + (narrationSec * i) / n : 0.4 + (Math.max(0.5, seconds - 1.2) * i) / n;
+					} else {
+						const span = Math.min(n * 0.32, Math.max(0.3, (hasVoice ? narrationSec : seconds) * 0.55 - 0.6));
+						atSec = 0.6 + (n > 1 ? (span * i) / (n - 1) : 0);
+					}
 				}
 				const atFrame = Math.min(durationInFrames - 1, Math.max(previous + 1, frames(Math.max(0, atSec))));
 				previous = atFrame;
-				return { text: bullet.text, atFrame };
+				return atFrame;
 			});
+		};
+
+		const bullets = scene.text?.bullets;
+		let timedBullets: { text: string; atFrame: number; icon?: TimelineIcon }[] | undefined;
+		if (bullets?.length) {
+			const at = cueFrames(bullets, "bullet", "narration");
+			timedBullets = bullets.map((bullet, i) => ({ text: bullet.text, atFrame: at[i]!, icon: icon(bullet.icon, label) }));
+		}
+
+		let chart: TimelineScene["content"]["chart"];
+		if (scene.chart) {
+			const at = cueFrames(scene.chart.data, "chart value", "brisk");
+			chart = {
+				kind: scene.chart.kind,
+				points: scene.chart.data.map((point, i) => ({ label: point.label, value: point.value, atFrame: at[i]!, highlight: point.highlight })),
+				prefix: scene.chart.prefix,
+				suffix: scene.chart.suffix,
+				decimals: scene.chart.decimals,
+				max: scene.chart.max,
+				showValues: scene.chart.showValues ?? true,
+			};
+		}
+
+		let map: TimelineScene["content"]["map"];
+		if (scene.map) {
+			const camera = scene.map.camera ?? "overview";
+			const at = cueFrames(scene.map.places, "place", camera === "tour" ? "narration" : "brisk");
+			map = {
+				places: scene.map.places.map((place, i) => ({ name: place.name, lat: place.lat, lng: place.lng, atFrame: at[i]! })),
+				camera,
+				route: scene.map.route ?? false,
+				zoom: scene.map.zoom,
+				style: scene.map.style ?? (luminance(theme.colors.background) < 0.4 ? "dark" : "light"),
+			};
 		}
 
 		// --- sound effects ---------------------------------------------------
@@ -311,6 +396,7 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 			layout: { ...LAYOUT_DEFAULTS[scene.type], ...scene.layout },
 			content: {
 				kicker: text.kicker,
+				icon: icon(text.icon, label),
 				heading: text.heading,
 				subheading: text.subheading,
 				body: text.body,
@@ -321,6 +407,8 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 				cta: text.cta,
 				lowerThird: text.lowerThird,
 				showLogo: text.showLogo ?? (scene.type === "outro" ? true : undefined),
+				chart,
+				map,
 			},
 		});
 		timings.push({
@@ -340,22 +428,33 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 			return { kind: "gradient", colors: visual.colors ?? [theme.colors.primary, theme.colors.secondary], angle: visual.angle ?? 135 };
 		}
 		const assetId = visual.source === "asset" ? visual.assetId : resolved.visual[scene.id]?.assetId;
-		const asset = ready(assetId, ["image", "video"]);
+		const asset = ready(assetId, ["image", "video", "animation"]);
 		if (!asset) {
 			if (visual.source === "asset") {
 				const exists = assetId ? assets.get(assetId) : undefined;
 				missing(
 					exists
-						? `${label}: asset ${assetId} is ${exists.ready ? `a ${exists.kind}, not an image or video` : "not ready"}`
+						? `${label}: asset ${assetId} is ${exists.ready ? `a ${exists.kind}, not an image, video or animation` : "not ready"}`
 						: `${label}: asset ${assetId} does not exist in this project`,
 				);
 			} else {
-				missing(`${label}: its ${visual.source === "stock" ? "stock media" : visual.source} has not been generated yet`);
+				missing(`${label}: its ${visual.source === "stock" ? "stock media" : visual.source === "vector" ? "vector illustration" : visual.source} has not been generated yet`);
 			}
 			return { kind: "brand" };
 		}
+		if (visual.cutout && asset.kind !== "image") warnings.push(`${label}: cutout only works on still images, so it was ignored`);
+		if (asset.kind === "animation") return { kind: "lottie", src: src(asset.id), loop: visual.loop ?? true };
 		if (asset.kind === "image") {
-			return { kind: "image", src: src(asset.id), fit: visual.fit ?? "cover", focus: visual.focus };
+			const svg = /svg/i.test(asset.contentType ?? "");
+			const draw = svg ? (visual.draw ?? visual.source === "vector") : false;
+			if (visual.draw && !svg) warnings.push(`${label}: draw only works on SVG pictures, so it was ignored`);
+			let cutout: Extract<TimelineBackground, { kind: "image" }>["cutout"];
+			if (visual.cutout) {
+				const cut = ready(resolved.cutout?.[scene.id]?.assetId, ["image"]);
+				if (cut) cutout = { src: src(cut.id), mode: visual.cutout };
+				else if (!draft) warnings.push(`${label}: the cut-out of its picture is not available, so the whole picture is shown`);
+			}
+			return { kind: "image", src: src(asset.id), fit: visual.fit ?? "cover", focus: visual.focus, draw: draw || undefined, cutout };
 		}
 		return {
 			kind: "video",

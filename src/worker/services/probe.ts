@@ -14,10 +14,25 @@ export interface MediaInfo {
 	hasVideo?: boolean;
 }
 
-/** Reads the pixel size from a PNG, JPEG, GIF or WebP header. */
+/** The size an SVG declares: its width and height attributes, else its view box. */
+function svgSize(bytes: Uint8Array): { width: number; height: number } | null {
+	const head = new TextDecoder().decode(bytes.subarray(0, 4096));
+	const tag = /<svg\b[^>]*>/i.exec(head)?.[0];
+	if (!tag) return null;
+	const attr = (name: string) => new RegExp(`\\s${name}\\s*=\\s*["']([^"']+)["']`, "i").exec(tag)?.[1];
+	const px = (value?: string) => (value && /^\s*[\d.]+\s*(px)?\s*$/.test(value) ? Number.parseFloat(value) : undefined);
+	const box = attr("viewBox")?.trim().split(/[\s,]+/).map(Number);
+	const width = px(attr("width")) ?? (box?.length === 4 ? box[2] : undefined);
+	const height = px(attr("height")) ?? (box?.length === 4 ? box[3] : undefined);
+	return width && height ? { width: Math.round(width), height: Math.round(height) } : null;
+}
+
+/** Reads the pixel size from a PNG, JPEG, GIF, WebP or SVG header. */
 export function imageSize(bytes: Uint8Array): { width: number; height: number } | null {
 	const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 	if (bytes.length < 30) return null;
+	const first = bytes.findIndex((b) => b !== 0x20 && b !== 0x0a && b !== 0x0d && b !== 0x09 && b !== 0xef && b !== 0xbb && b !== 0xbf);
+	if (bytes[first] === 0x3c) return svgSize(bytes);
 	// PNG
 	if (view.getUint32(0) === 0x89504e47) return { width: view.getUint32(16), height: view.getUint32(20) };
 	// GIF
@@ -56,9 +71,35 @@ export function imageSize(bytes: Uint8Array): { width: number; height: number } 
 	return null;
 }
 
+/** Largest Lottie file accepted. Real animations are rarely over a few hundred KB. */
+export const MAX_LOTTIE_BYTES = 20 * 1024 * 1024;
+
+/** Frame size and length of a Lottie (Bodymovin) animation, or null when the JSON is not one. */
+export function lottieInfo(bytes: Uint8Array): { width: number; height: number; durationMs: number } | null {
+	try {
+		const data = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown> | null;
+		const [w, h, fr, ip, op] = ["w", "h", "fr", "ip", "op"].map((key) => data?.[key]);
+		const numbers = [w, h, fr, ip, op].every((value) => typeof value === "number" && Number.isFinite(value));
+		if (!numbers || !Array.isArray(data?.layers)) return null;
+		if ((fr as number) <= 0 || (op as number) <= (ip as number) || (w as number) <= 0 || (h as number) <= 0) return null;
+		return {
+			width: Math.round(w as number),
+			height: Math.round(h as number),
+			durationMs: Math.round((((op as number) - (ip as number)) / (fr as number)) * 1000),
+		};
+	} catch {
+		return null;
+	}
+}
+
 /** Probes an object already stored in R2. Never throws: unknown formats return {}. */
 export async function probeObject(key: string, contentType: string, size: number): Promise<MediaInfo> {
 	try {
+		if (contentType.startsWith("application/json")) {
+			if (size > MAX_LOTTIE_BYTES) return {};
+			const object = await env.MEDIA.get(key);
+			return (object && lottieInfo(new Uint8Array(await object.arrayBuffer()))) ?? {};
+		}
 		if (contentType.startsWith("image/")) {
 			const head = await env.MEDIA.get(key, { range: { offset: 0, length: Math.min(size, 512 * 1024) } });
 			if (!head) return {};

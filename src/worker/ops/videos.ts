@@ -179,7 +179,9 @@ export const videoOps = [
 				...Object.values(video.resolved.narration),
 				...Object.values(video.resolved.visual),
 				...Object.values(video.resolved.sfx),
+				...Object.values(video.resolved.cutout ?? {}),
 				...(video.resolved.music ? [video.resolved.music] : []),
+				// Icons are left alone: they are shared by every video in the project.
 			].map((entry) => entry.assetId);
 			const assets = [...(await assetsById(project.id, generated)).values()].filter((asset) => asset.tags.includes("auto"));
 			for (const asset of assets) if (asset.r2Key) keys.push(asset.r2Key);
@@ -227,7 +229,11 @@ export const videoOps = [
 				if (after < 0) throw notFound(`Scene "${input.afterSceneId}"`);
 				scenes.splice(after + 1, 0, input.scene);
 			} else scenes.splice(input.index ?? scenes.length, 0, input.scene);
-			const storyboard = Storyboard.parse({ ...video.storyboard, scenes });
+			const parsed = Storyboard.safeParse({ ...video.storyboard, scenes });
+			if (!parsed.success) {
+				throw badRequest(`Invalid scene: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+			}
+			const storyboard = parsed.data;
 			const updated = await saveStoryboard(video, storyboard);
 			return { sceneIds: scenes.map((scene) => scene.id), review: await reviewStoryboard(updated, project) };
 		},
@@ -269,7 +275,7 @@ export const videoOps = [
 		title: "Estimate a video",
 		description:
 			"Free. The video's expected length scene by scene, and exactly what video.prepare would generate (and so what it would cost): " +
-			"narration, images, stock lookups, clips and music. Check this before preparing, especially when the storyboard uses generated clips.",
+			"narration, images, vector illustrations, cut-outs, icons, stock lookups, clips and music. Check this before preparing, especially when the storyboard uses generated clips.",
 		input: z.object({ videoId }),
 		readOnly: true,
 		handler: async (input, { actor }) => {
@@ -287,13 +293,17 @@ export const videoOps = [
 				toGenerate: {
 					narration: { scenes: count("narration"), characters: sum("narration") },
 					images: count("image"),
+					vectors: count("vector"),
+					cutouts: count("cutout"),
+					icons: count("icon"),
 					stock: count("stock"),
 					clips: { count: count("clip"), seconds: sum("clip") },
 					soundEffects: count("sfx"),
 					music: count("music") ? { seconds: sum("music") } : null,
 				},
+				...([...first.problems, ...second.problems].length ? { mediaProblems: [...first.problems, ...second.problems] } : {}),
 				note: todo.length
-					? "Generated clips cost far more than anything else here. Everything else is cheap."
+					? "Generated clips cost far more than anything else here. Everything else is cheap (icons, charts and maps are free)."
 					: "Nothing to generate: all media for the current storyboard already exists.",
 			};
 		},

@@ -1,0 +1,585 @@
+{
+	"version": 1,
+	"fps": 30,
+	"durationInFrames": 1890,
+	"theme": {
+		"colors": {
+			"primary": "#1F3A5F",
+			"secondary": "#B9A58A",
+			"accent": "#E4572E",
+			"background": "#F4F1EA",
+			"surface": "#FFFFFF",
+			"text": "#15171C",
+			"mutedText": "#5E6470"
+		},
+		"fonts": {
+			"heading": {
+				"family": "Fraunces",
+				"weight": 600
+			},
+			"body": {
+				"family": "DM Sans",
+				"weight": 400
+			}
+		},
+		"radius": 14,
+		"motion": {
+			"energy": "balanced",
+			"textAnimation": "rise",
+			"kenBurns": "subtle"
+		},
+		"captions": {
+			"enabled": false,
+			"mode": "karaoke",
+			"position": "bottom",
+			"uppercase": false,
+			"highlightColor": "#FFB23E",
+			"background": "pill"
+		},
+		"scrim": 0.5,
+		"logo": {
+			"src": "asset://logo.svg",
+			"darkSrc": "asset://logo-dark.svg"
+		},
+		"watermark": {
+			"src": "asset://watermark.svg",
+			"position": "top-right",
+			"opacity": 0.7,
+			"scale": 0.05
+		}
+	},
+	"scenes": [
+		{
+			"id": "columns",
+			"type": "chart",
+			"layout": {
+				"align": "left",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"kicker": "Growth",
+				"heading": "Weekly active teams",
+				"icon": {
+					"src": "asset://icon-chart.svg",
+					"mono": true
+				},
+				"chart": {
+					"kind": "column",
+					"showValues": true,
+					"suffix": "k",
+					"points": [
+						{
+							"label": "Jan",
+							"value": 12,
+							"atFrame": 18,
+							"highlight": false
+						},
+						{
+							"label": "Feb",
+							"value": 18,
+							"atFrame": 28,
+							"highlight": false
+						},
+						{
+							"label": "Mar",
+							"value": 21,
+							"atFrame": 37,
+							"highlight": false
+						},
+						{
+							"label": "Apr",
+							"value": 29,
+							"atFrame": 47,
+							"highlight": false
+						},
+						{
+							"label": "May",
+							"value": 34,
+							"atFrame": 56,
+							"highlight": false
+						},
+						{
+							"label": "Jun",
+							"value": 47,
+							"atFrame": 66,
+							"highlight": true
+						}
+					]
+				}
+			},
+			"startFrame": 0,
+			"durationInFrames": 150,
+			"transition": {
+				"type": "cut",
+				"durationInFrames": 0
+			},
+			"background": {
+				"kind": "brand"
+			}
+		},
+		{
+			"id": "donut",
+			"type": "chart",
+			"layout": {
+				"align": "left",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"heading": "Where the time goes",
+				"chart": {
+					"kind": "donut",
+					"showValues": true,
+					"points": [
+						{
+							"label": "Deep work",
+							"value": 46,
+							"atFrame": 18
+						},
+						{
+							"label": "Meetings",
+							"value": 24,
+							"atFrame": 28
+						},
+						{
+							"label": "Email",
+							"value": 18,
+							"atFrame": 37
+						},
+						{
+							"label": "Admin",
+							"value": 12,
+							"atFrame": 47
+						}
+					]
+				}
+			},
+			"startFrame": 150,
+			"durationInFrames": 150,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "brand"
+			}
+		},
+		{
+			"id": "line",
+			"type": "chart",
+			"layout": {
+				"align": "left",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"kicker": "Response time",
+				"heading": "Twice as fast since spring",
+				"chart": {
+					"kind": "line",
+					"showValues": true,
+					"suffix": " ms",
+					"points": [
+						{
+							"label": "W1",
+							"value": 420,
+							"atFrame": 15
+						},
+						{
+							"label": "W2",
+							"value": 410,
+							"atFrame": 22
+						},
+						{
+							"label": "W3",
+							"value": 380,
+							"atFrame": 28
+						},
+						{
+							"label": "W4",
+							"value": 350,
+							"atFrame": 35
+						},
+						{
+							"label": "W5",
+							"value": 300,
+							"atFrame": 41
+						},
+						{
+							"label": "W6",
+							"value": 280,
+							"atFrame": 48
+						},
+						{
+							"label": "W7",
+							"value": 240,
+							"atFrame": 55
+						},
+						{
+							"label": "W8",
+							"value": 230,
+							"atFrame": 61
+						},
+						{
+							"label": "W9",
+							"value": 210,
+							"atFrame": 68
+						},
+						{
+							"label": "W10",
+							"value": 205,
+							"atFrame": 74
+						}
+					]
+				}
+			},
+			"startFrame": 300,
+			"durationInFrames": 150,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "brand"
+			}
+		},
+		{
+			"id": "bars",
+			"type": "chart",
+			"layout": {
+				"align": "left",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"heading": "Most requested features",
+				"chart": {
+					"kind": "bar",
+					"showValues": true,
+					"suffix": "%",
+					"points": [
+						{
+							"label": "Calendar sync",
+							"value": 72,
+							"atFrame": 18,
+							"highlight": false
+						},
+						{
+							"label": "Focus mode",
+							"value": 58,
+							"atFrame": 28,
+							"highlight": true
+						},
+						{
+							"label": "Shared plans",
+							"value": 41,
+							"atFrame": 37,
+							"highlight": false
+						},
+						{
+							"label": "Templates",
+							"value": 27,
+							"atFrame": 47,
+							"highlight": false
+						}
+					]
+				}
+			},
+			"startFrame": 450,
+			"durationInFrames": 150,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "brand"
+			}
+		},
+		{
+			"id": "map-overview",
+			"type": "map",
+			"layout": {
+				"align": "left",
+				"textPosition": "top",
+				"mediaSide": "right"
+			},
+			"content": {
+				"kicker": "Offices",
+				"heading": "Three cities, one team",
+				"map": {
+					"camera": "overview",
+					"route": true,
+					"style": "light",
+					"places": [
+						{
+							"name": "Lisbon",
+							"lat": 38.7223,
+							"lng": -9.1393,
+							"atFrame": 24
+						},
+						{
+							"name": "Berlin",
+							"lat": 52.52,
+							"lng": 13.405,
+							"atFrame": 51
+						},
+						{
+							"name": "Warsaw",
+							"lat": 52.2297,
+							"lng": 21.0122,
+							"atFrame": 78
+						}
+					]
+				}
+			},
+			"startFrame": 600,
+			"durationInFrames": 180,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "brand"
+			}
+		},
+		{
+			"id": "map-tour",
+			"type": "map",
+			"layout": {
+				"align": "left",
+				"textPosition": "bottom",
+				"mediaSide": "right"
+			},
+			"content": {
+				"heading": "The route",
+				"map": {
+					"camera": "tour",
+					"route": true,
+					"style": "dark",
+					"places": [
+						{
+							"name": "Porto",
+							"lat": 41.1579,
+							"lng": -8.6291,
+							"atFrame": 36
+						},
+						{
+							"name": "Madrid",
+							"lat": 40.4168,
+							"lng": -3.7038,
+							"atFrame": 108
+						},
+						{
+							"name": "Barcelona",
+							"lat": 41.3874,
+							"lng": 2.1686,
+							"atFrame": 180
+						}
+					]
+				}
+			},
+			"startFrame": 780,
+			"durationInFrames": 240,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "brand"
+			}
+		},
+		{
+			"id": "icons",
+			"type": "bullets",
+			"layout": {
+				"align": "left",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"heading": "Built for busy weeks",
+				"bullets": [
+					{
+						"text": "Plans itself around your meetings",
+						"atFrame": 18,
+						"icon": {
+							"src": "asset://icon-rocket.svg",
+							"mono": true
+						}
+					},
+					{
+						"text": "Private by default",
+						"atFrame": 42,
+						"icon": {
+							"src": "asset://icon-shield.svg",
+							"mono": true
+						}
+					},
+					{
+						"text": "Works in every time zone",
+						"atFrame": 66,
+						"icon": {
+							"src": "asset://icon-globe.svg",
+							"mono": true
+						}
+					},
+					{
+						"text": "Celebrates the wins",
+						"atFrame": 90,
+						"icon": {
+							"src": "asset://icon-party.svg",
+							"mono": false
+						}
+					}
+				]
+			},
+			"startFrame": 1020,
+			"durationInFrames": 150,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "brand"
+			}
+		},
+		{
+			"id": "parallax",
+			"type": "media",
+			"layout": {
+				"align": "left",
+				"textPosition": "bottom",
+				"mediaSide": "right"
+			},
+			"content": {
+				"heading": "Depth from a single still"
+			},
+			"startFrame": 1170,
+			"durationInFrames": 150,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "image",
+				"src": "asset://subject-photo.jpg",
+				"fit": "cover",
+				"cutout": {
+					"src": "asset://subject.png",
+					"mode": "parallax"
+				}
+			}
+		},
+		{
+			"id": "isolate-split",
+			"type": "split",
+			"layout": {
+				"align": "left",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"kicker": "Product",
+				"heading": "The subject, on its own",
+				"subheading": "Background removed, brand backdrop behind."
+			},
+			"startFrame": 1320,
+			"durationInFrames": 150,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "image",
+				"src": "asset://subject-photo.jpg",
+				"fit": "cover",
+				"cutout": {
+					"src": "asset://subject.png",
+					"mode": "isolate"
+				}
+			}
+		},
+		{
+			"id": "isolate-full",
+			"type": "media",
+			"layout": {
+				"align": "left",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"heading": "Room for the words",
+				"subheading": "The subject takes the other half."
+			},
+			"startFrame": 1470,
+			"durationInFrames": 150,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "image",
+				"src": "asset://subject-photo.jpg",
+				"fit": "cover",
+				"cutout": {
+					"src": "asset://subject.png",
+					"mode": "isolate"
+				}
+			}
+		},
+		{
+			"id": "drawn",
+			"type": "media",
+			"layout": {
+				"align": "left",
+				"textPosition": "bottom",
+				"mediaSide": "right"
+			},
+			"content": {
+				"heading": "Illustrations that draw themselves"
+			},
+			"startFrame": 1620,
+			"durationInFrames": 150,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "image",
+				"src": "asset://illustration.svg",
+				"fit": "cover",
+				"draw": true
+			}
+		},
+		{
+			"id": "lottie",
+			"type": "media",
+			"layout": {
+				"align": "center",
+				"textPosition": "bottom",
+				"mediaSide": "right"
+			},
+			"content": {
+				"heading": "Lottie, on the brand backdrop",
+				"icon": {
+					"src": "asset://icon-rocket.svg",
+					"mono": true
+				}
+			},
+			"startFrame": 1770,
+			"durationInFrames": 120,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 12
+			},
+			"background": {
+				"kind": "lottie",
+				"src": "asset://pulse.json",
+				"loop": true
+			}
+		}
+	],
+	"audio": [],
+	"captions": []
+}

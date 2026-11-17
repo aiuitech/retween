@@ -2,22 +2,24 @@
  * Videos: storyboards, the media they need, and composing them into timelines.
  */
 import { env } from "cloudflare:workers";
-import { desc, eq, inArray } from "drizzle-orm";
-import { type BrandKit, DEFAULTS } from "../../../shared/brand.ts";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { type BrandKit, DEFAULTS, resolvePalette } from "../../../shared/brand.ts";
 import { type ComposeAsset, type ComposeResult, composeTimeline } from "../../../shared/compose.ts";
-import type { Scene, Storyboard } from "../../../shared/storyboard.ts";
+import { type Scene, type Storyboard, storyboardIcons } from "../../../shared/storyboard.ts";
 import type { AspectRatio } from "../../../shared/timeline.ts";
 import type { Actor } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
 import type { GenerationSpec, ResolvedMedia } from "../db/schema.ts";
 import { clamp, hashOf, notFound } from "../lib/util.ts";
+import { falConfigured } from "../providers/fal.ts";
+import { iconLicense, iconSets, iconSvgUrl, missingIcons } from "../providers/iconify.ts";
 import { type Orientation, searchStock } from "../providers/stock.ts";
 import { type Asset, assetsById, createAsset, deleteAsset } from "./assets.ts";
 import { type Project, getProject } from "./projects.ts";
 
 export type Video = typeof schema.videos.$inferSelect;
 
-export const emptyResolved = (): ResolvedMedia => ({ narration: {}, visual: {}, sfx: {} });
+export const emptyResolved = (): ResolvedMedia => ({ narration: {}, visual: {}, sfx: {}, icons: {}, cutout: {} });
 
 export async function getVideo(actor: Actor, videoId: string): Promise<{ video: Video; project: Project }> {
 	const video = await db.query.videos.findFirst({ where: eq(schema.videos.id, videoId) });
@@ -43,7 +45,7 @@ function referencedAssetIds(storyboard: Storyboard, resolved: ResolvedMedia, bra
 		ids.add(scene.visual?.assetId);
 		for (const effect of scene.sfx ?? []) ids.add(effect.assetId);
 	}
-	for (const group of [resolved.narration, resolved.visual, resolved.sfx]) {
+	for (const group of [resolved.narration, resolved.visual, resolved.sfx, resolved.icons ?? {}, resolved.cutout ?? {}]) {
 		for (const entry of Object.values(group)) ids.add(entry.assetId);
 	}
 	ids.add(resolved.music?.assetId);
@@ -63,6 +65,8 @@ const toComposeAsset = (asset: Asset): ComposeAsset => ({
 	ready: asset.status === "ready",
 	durationSec: asset.durationMs != null ? asset.durationMs / 1000 : undefined,
 	words: asset.meta.words,
+	contentType: asset.contentType ?? undefined,
+	mono: typeof asset.meta.mono === "boolean" ? asset.meta.mono : undefined,
 });
 
 /** What the current timeline (if any) was built from; changes whenever a recompose is due. */
@@ -110,7 +114,7 @@ export interface RegenerateOptions {
 }
 
 export interface PlannedItem {
-	kind: "narration" | "image" | "clip" | "stock" | "sfx" | "music";
+	kind: "narration" | "image" | "vector" | "cutout" | "icon" | "clip" | "stock" | "sfx" | "music";
 	sceneId?: string;
 	/** Characters for narration, seconds for clips and music. */
 	units?: number;
@@ -134,6 +138,15 @@ export function styledImagePrompt(brand: BrandKit, prompt: string, castIds: stri
 	const style = brand.visual?.imageStyle;
 	if (style?.prompt) parts.push(`Style: ${style.prompt}`);
 	if (style?.avoid) parts.push(`Avoid: ${style.avoid}`);
+	return parts.join("\n\n");
+}
+
+/** A vector prompt: the scene's own words plus the brand's style lock (but not its photographic "avoid" list). */
+export function styledVectorPrompt(brand: BrandKit, prompt: string, castIds: string[] = []): string {
+	const parts = [prompt.trim(), "Flat vector illustration, clean shapes, no text."];
+	const cast = (brand.cast ?? []).filter((member) => castIds.includes(member.id));
+	for (const member of cast) parts.push(`${member.name}: ${member.description}`);
+	if (brand.visual?.imageStyle?.avoid) parts.push(`Avoid: ${brand.visual.imageStyle.avoid}`);
 	return parts.join("\n\n");
 }
 
@@ -186,6 +199,8 @@ export async function planMedia(
 	const { video, project } = await loadVideo(videoId);
 	const brand = project.brand;
 	const resolved: ResolvedMedia = structuredClone(video.resolved);
+	resolved.icons ??= {};
+	resolved.cutout ??= {};
 	const existing = await assetsById(project.id, referencedAssetIds(video.storyboard, resolved, brand));
 	const plan: MediaPlan = { todo: [], created: [], pending: [], problems: [] };
 	const superseded: string[] = [];
@@ -216,6 +231,70 @@ export async function planMedia(
 	};
 	const base = { projectId: project.id, createdBy: userId, source: "generated" as const };
 	const sceneName = (scene: Scene) => scene.label ?? scene.id;
+
+	// Icons: one file per icon, shared by every scene that uses it.
+	if (phase === 1) {
+		const names = storyboardIcons(video.storyboard, brand.visual?.iconSet);
+		const needed = names.filter((name) => {
+			const asset = existing.get(resolved.icons![name]?.assetId ?? "");
+			return !asset || asset.status === "failed";
+		});
+		const prefixes = [...new Set(needed.map((name) => name.split(":")[0]!))];
+		const sets = needed.length ? await iconSets(prefixes).catch(() => null) : new Map();
+		const absent = new Set<string>();
+		if (sets) {
+			for (const prefix of prefixes) {
+				const inSet = needed.filter((name) => name.startsWith(`${prefix}:`));
+				if (!sets.has(prefix)) {
+					plan.problems.push(`Icon set "${prefix}" does not exist (used by ${inSet.join(", ")}). Find icons with icon.search.`);
+					for (const name of inSet) absent.add(name);
+					continue;
+				}
+				const missing = await missingIcons(prefix, inSet.map((name) => name.split(":")[1]!)).catch(() => []);
+				for (const icon of missing) {
+					plan.problems.push(`Icon "${prefix}:${icon}" does not exist. Find icons with icon.search.`);
+					absent.add(`${prefix}:${icon}`);
+				}
+			}
+		} else {
+			plan.problems.push("Icons could not be looked up just now (Iconify did not answer); they are left out this time.");
+		}
+		// An icon another video in the project already fetched is shared rather than fetched again. Icons are only
+		// ever replaced when their file failed, so a shared one is never deleted from under another video.
+		const shared = new Map<string, Asset>();
+		if (needed.length && !dryRun) {
+			const rows = await db.query.assets.findMany({
+				where: and(eq(schema.assets.projectId, project.id), eq(schema.assets.status, "ready"), inArray(schema.assets.name, needed.map((name) => `Icon · ${name}`))),
+			});
+			for (const row of rows) if (typeof row.meta.icon === "string") shared.set(row.meta.icon, row);
+		}
+		for (const name of names) {
+			const reuse = shared.get(name);
+			if (reuse) {
+				resolved.icons![name] = { assetId: reuse.id, hash: await hashOf({ icon: name }) };
+				existing.set(reuse.id, reuse);
+				continue;
+			}
+			if (absent.has(name) || (needed.includes(name) && !sets)) continue;
+			const set = sets?.get(name.split(":")[0]!);
+			const entry = await ensure(resolved.icons![name], await hashOf({ icon: name }), false, { kind: "icon" }, async () =>
+				set
+					? createAsset({
+							...base,
+							source: "url",
+							kind: "image",
+							name: `Icon · ${name}`,
+							tags: ["auto", "icon"],
+							meta: { icon: name, mono: !set.palette, provider: "iconify" },
+							license: iconLicense(set),
+							generation: { type: "url", url: iconSvgUrl(name) },
+						})
+					: null,
+			);
+			if (entry) resolved.icons![name] = entry;
+		}
+		for (const name of Object.keys(resolved.icons!)) if (!names.includes(name)) delete resolved.icons![name];
+	}
 
 	for (const scene of video.storyboard.scenes) {
 		if (phase === 1) {
@@ -251,9 +330,64 @@ export async function planMedia(
 
 		const visual = scene.visual;
 		const forceVisual = Boolean(regenerate.visuals && inScope(scene.id));
-		if (!visual || !["image", "video", "stock"].includes(visual.source)) {
+
+		// Subject cut-out, made once the scene's picture exists.
+		if (phase === 1 && !visual?.cutout) delete resolved.cutout![scene.id];
+		if (phase === 2 && visual?.cutout) {
+			const pictureId = visual.source === "asset" ? visual.assetId : resolved.visual[scene.id]?.assetId;
+			const picture = existing.get(pictureId ?? "") ?? (pictureId ? (await assetsById(project.id, [pictureId])).get(pictureId) : undefined);
+			if (picture && picture.kind !== "image") {
+				// compose explains that cut-outs need a still.
+			} else if (!falConfigured()) {
+				plan.problems.push(`Scene "${scene.id}": cut-outs need a fal.ai key (FAL_KEY), so the whole picture is shown.`);
+			} else if (dryRun && !picture) {
+				plan.todo.push({ kind: "cutout", sceneId: scene.id });
+			} else if (picture?.status === "ready") {
+				const spec: GenerationSpec = { type: "cutout", sourceAssetId: picture.id };
+				const entry = await ensure(resolved.cutout![scene.id], await hashOf(spec), forceVisual, { kind: "cutout", sceneId: scene.id }, () =>
+					createAsset({
+						...base,
+						kind: "image",
+						name: `Cut-out · ${video.title} · ${sceneName(scene)}`,
+						tags: ["auto", "scene", "cutout"],
+						meta: { prompt: picture.meta.prompt },
+						generation: spec,
+					}),
+				);
+				if (entry) resolved.cutout![scene.id] = entry;
+			}
+		}
+
+		if (!visual || !["image", "vector", "video", "stock"].includes(visual.source)) {
 			if (phase === 1) delete resolved.visual[scene.id];
 			continue;
+		}
+
+		if (visual.source === "vector" && phase === 1) {
+			if (!falConfigured()) {
+				plan.problems.push(`Scene "${scene.id}": vector illustrations need a fal.ai key (FAL_KEY). Use source "image" instead, or set the key.`);
+			} else {
+				const palette = resolvePalette(brand.visual?.palette);
+				const spec: GenerationSpec = {
+					type: "vector",
+					prompt: styledVectorPrompt(brand, visual.prompt!, visual.cast),
+					aspectRatio: video.aspect,
+					colors: [palette.primary, palette.secondary, palette.accent, palette.surface],
+					background: palette.background,
+					pro: brand.visual?.imageStyle?.quality === "max",
+				};
+				const entry = await ensure(resolved.visual[scene.id], await hashOf(spec), forceVisual, { kind: "vector", sceneId: scene.id }, () =>
+					createAsset({
+						...base,
+						kind: "image",
+						name: `Vector · ${video.title} · ${sceneName(scene)}`,
+						tags: ["auto", "scene", "vector"],
+						meta: { prompt: visual.prompt },
+						generation: spec,
+					}),
+				);
+				if (entry) resolved.visual[scene.id] = entry;
+			}
 		}
 
 		if (visual.source === "image" && phase === 1) {
@@ -347,6 +481,7 @@ export async function planMedia(
 			for (const key of Object.keys(group)) if (!sceneIds.has(key)) delete group[key];
 		}
 		for (const key of Object.keys(resolved.sfx)) if (!sceneIds.has(key.split(":")[0]!)) delete resolved.sfx[key];
+		for (const key of Object.keys(resolved.cutout!)) if (!sceneIds.has(key)) delete resolved.cutout![key];
 	}
 
 	// Music bed, sized to the finished video.
@@ -425,14 +560,18 @@ export async function mediaStatus(video: Video, project: Project) {
 		scenes: video.storyboard.scenes.map((scene) => ({
 			id: scene.id,
 			narration: scene.narration ? (describe(video.resolved.narration[scene.id]?.assetId) ?? { status: "missing" }) : undefined,
+			cutout: scene.visual?.cutout ? (describe(video.resolved.cutout?.[scene.id]?.assetId) ?? { status: "missing" }) : undefined,
 			visual:
-				scene.visual && ["image", "video", "stock"].includes(scene.visual.source)
+				scene.visual && ["image", "vector", "video", "stock"].includes(scene.visual.source)
 					? (describe(video.resolved.visual[scene.id]?.assetId) ?? { status: "missing" })
 					: scene.visual?.source === "asset"
 						? (describe(scene.visual.assetId) ?? { status: "missing" })
 						: undefined,
 		})),
 		music: describe(video.resolved.music?.assetId ?? video.storyboard.music?.assetId ?? project.brand.audio?.musicAssetId),
+		icons: Object.fromEntries(
+			storyboardIcons(video.storyboard, project.brand.visual?.iconSet).map((name) => [name, describe(video.resolved.icons?.[name]?.assetId) ?? { status: "missing" }]),
+		),
 	};
 }
 
@@ -488,6 +627,20 @@ export async function videoCredits(video: Video, project: Project) {
 			attributionRequired: asset.license!.attributionRequired,
 			attribution: asset.license!.attribution,
 		}));
+	if (video.storyboard.scenes.some((scene) => scene.type === "map")) {
+		// The map data is OpenStreetMap's (ODbL): it must be credited wherever the video appears.
+		credits.push({
+			assetId: "",
+			name: "Map data and tiles",
+			provider: "openstreetmap",
+			license: "ODbL 1.0",
+			licenseUrl: "https://www.openstreetmap.org/copyright",
+			author: "OpenStreetMap contributors",
+			sourceUrl: "https://openfreemap.org",
+			attributionRequired: true,
+			attribution: "Map data © OpenStreetMap contributors (ODbL); tiles © OpenMapTiles, served by OpenFreeMap",
+		});
+	}
 	const required = credits.filter((credit) => credit.attributionRequired);
 	return {
 		credits,

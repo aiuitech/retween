@@ -7,9 +7,11 @@ import { ASSET_KINDS, type GenerationSpec } from "../db/schema.ts";
 import { badRequest } from "../lib/util.ts";
 import { listVoices } from "../providers/elevenlabs.ts";
 import { IMAGE_ASPECTS, VIDEO_RESOLUTIONS } from "../providers/openrouter.ts";
+import { searchIcons, searchPlaces } from "../providers/iconify.ts";
 import { STOCK_PROVIDERS, availableProviders, getStockItem, searchStock } from "../providers/stock.ts";
 import { type Asset, assetView, createAsset, deleteAsset, getAsset, startGeneration, waitForAssets } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
+import { signedUploadUrl } from "../services/storage.ts";
 import { assertBudget } from "../services/usage.ts";
 import { imageReferenceIds, narrationSpec, styledImagePrompt } from "../services/videos.ts";
 import { defineOp, waitSeconds } from "./registry.ts";
@@ -113,17 +115,25 @@ export const assetOps = [
 		name: "asset.upload_link",
 		title: "Upload link",
 		description:
-			"A link to give the person you are working with so they can upload their own files (logo, photos, footage, voiceover, music, fonts) into a project from their browser. " +
-			"You cannot receive their files directly: send them this link, ask them to say when they are done, then find the new assets with asset.list. " +
-			"From a shell the CLI also uploads: `retween asset upload <file…> --project <id>`.",
-		input: z.object({ projectId }),
+			"Two ways to get files that are not on the web (logo, photos, footage, voiceover, music, fonts) into a project. " +
+			"`uploadUrl` is for you: if you can run commands and have the files locally, upload each one with no sign-in: " +
+			'`curl -T <file> "<uploadUrl>&name=<file name>"` (add `&tags=logo,reference` or `&description=…` as wanted); each upload returns the new asset. ' +
+			"`pageUrl` is for the person you are working with: they open it in their browser, signed in to Retween, and drop files in; ask them to say when they are done, then find the files with asset.list. " +
+			"The upload URL works until it expires and can only add files to this project, so do not share it more widely than needed.",
+		input: z.object({
+			projectId,
+			expiresInMinutes: z.number().int().min(5).max(24 * 60).default(60).describe("How long the upload URL keeps working"),
+		}),
 		readOnly: true,
 		handler: async (input, { actor }) => {
 			const project = await getProject(actor, input.projectId);
+			const upload = await signedUploadUrl(project.id, actor.id, input.expiresInMinutes * 60);
 			return {
-				url: `${env.APP_URL}/projects/${encodeURIComponent(project.id)}`,
-				accepts: "Images, video, audio and fonts, several at once. The person must be signed in to Retween with the account that owns the project.",
-				afterwards: `asset.list with projectId ${project.id} shows what they uploaded (source "upload").`,
+				uploadUrl: upload.url,
+				expiresAt: upload.expiresAt.toISOString(),
+				example: `curl -T logo.png "${upload.url}&name=logo.png&tags=logo"`,
+				pageUrl: `${env.APP_URL}/projects/${encodeURIComponent(project.id)}`,
+				accepts: "Images, video, audio and fonts. Name each file with its extension so its type is clear.",
 			};
 		},
 	}),
@@ -132,7 +142,8 @@ export const assetOps = [
 		name: "asset.import_url",
 		title: "Import from URL",
 		description:
-			"Download an image, video, audio or font file from a public URL into the project. " +
+			"Download an image, video, audio or font file, or a Lottie animation (the .json file, e.g. from lottiefiles.com), from a public URL into the project. " +
+			"A Lottie asset can then be a scene's visual (source \"asset\"); it plays over the brand backdrop. " +
 			"For files the person has on their own device, use asset.upload_link instead.",
 		input: z.object({
 			projectId,
@@ -429,6 +440,46 @@ export const assetOps = [
 			});
 			return generateAndWait(asset, input.waitSeconds);
 		},
+	}),
+
+	defineOp({
+		name: "icon.search",
+		title: "Search icons",
+		description:
+			"Find icons for scenes (text.icon, or an icon per bullet) among 200+ open-source Iconify sets. Free. " +
+			"Use the returned name as is (\"lucide:rocket\"). Keep to one set per video so the style stays consistent: " +
+			"the brand kit's visual.iconSet is used for names written without a prefix (lucide by default). " +
+			"Glyph sets take the scene's colours; multi-colour sets (palette: true, e.g. emoji) keep their own.",
+		input: z.object({
+			query: z.string().min(2).max(100).describe("What the icon shows, in English: rocket, shield check, growth chart"),
+			sets: z.array(z.string().max(40)).max(10).optional().describe('Only these icon sets, e.g. ["lucide"] or ["ph", "tabler"]'),
+			limit: z.number().int().min(1).max(64).default(24),
+		}),
+		readOnly: true,
+		handler: async (input) => {
+			const { icons, sets } = await searchIcons({ query: input.query, prefixes: input.sets, limit: input.limit });
+			return {
+				icons: icons.map((name) => {
+					const [prefix, icon] = name.split(":");
+					return { name, previewUrl: `https://api.iconify.design/${prefix}/${icon}.svg?height=96` };
+				}),
+				sets: sets.map((set) => ({ prefix: set.prefix, name: set.name, license: set.license?.title, palette: set.palette, category: set.category })),
+			};
+		},
+	}),
+
+	defineOp({
+		name: "place.search",
+		title: "Find a place",
+		description:
+			"Look up the coordinates of a city, landmark or address (OpenStreetMap) for a map scene. " +
+			"Use the lat/lng of the best match; give the place a short display name of your own in the scene.",
+		input: z.object({
+			query: z.string().min(2).max(200).describe('e.g. "Lisbon", "Eiffel Tower", "1 Infinite Loop, Cupertino"'),
+			limit: z.number().int().min(1).max(10).default(5),
+		}),
+		readOnly: true,
+		handler: async (input) => ({ places: await searchPlaces(input.query, input.limit) }),
 	}),
 
 	defineOp({

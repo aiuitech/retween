@@ -13,8 +13,9 @@ import { db, schema } from "../db/client.ts";
 import type { AssetKind, AssetLicense, AssetMeta, AssetSource, GenerationSpec } from "../db/schema.ts";
 import { AppError, badRequest, bytesToBase64, newId, notFound } from "../lib/util.ts";
 import { ESTIMATED_USD, composeMusic, generateSfx, synthesizeSpeech } from "../providers/elevenlabs.ts";
+import { ESTIMATED_USD as FAL_USD, generateVector, removeBackground } from "../providers/fal.ts";
 import { IMAGE_MODEL, generateImage } from "../providers/openrouter.ts";
-import { probeObject } from "./probe.ts";
+import { MAX_LOTTIE_BYTES, lottieInfo, probeObject } from "./probe.ts";
 import { type Project, getProject } from "./projects.ts";
 import { assetKey, contentTypeFor, extensionFor, kindFor, readObject, signedUrl } from "./storage.ts";
 import { recordUsage } from "./usage.ts";
@@ -114,6 +115,15 @@ export async function storeAsset(
 	contentType: string,
 	extra: { meta?: AssetMeta; durationMs?: number } = {},
 ): Promise<Asset> {
+	if (kindFor(contentType) === "animation") {
+		// JSON is only accepted as a Lottie animation, so read it whole and check before keeping it.
+		const bytes = body instanceof Uint8Array ? body : await readCapped(body, MAX_LOTTIE_BYTES, "A Lottie file larger than 20 MB");
+		if (!lottieInfo(bytes)) {
+			throw new AppError(422, "This JSON file is not a Lottie animation (Bodymovin JSON with w, h, fr, ip, op and layers)", "unsupported_media");
+		}
+		body = bytes;
+		contentType = "application/json";
+	}
 	const key = assetKey(asset.projectId, asset.id, extensionFor(contentType, asset.name));
 	const stored = await env.MEDIA.put(key, body, { httpMetadata: { contentType } });
 	const info = await probeObject(key, contentType, stored.size);
@@ -136,6 +146,24 @@ export async function storeAsset(
 		.where(eq(schema.assets.id, asset.id))
 		.returning();
 	return updated!;
+}
+
+/** Reads a stream into memory, refusing to go past `limit` bytes. */
+async function readCapped(stream: ReadableStream, limit: number, what: string): Promise<Uint8Array> {
+	const chunks: Uint8Array[] = [];
+	let total = 0;
+	for await (const chunk of stream as unknown as AsyncIterable<Uint8Array>) {
+		total += chunk.byteLength;
+		if (total > limit) throw new AppError(413, `${what} is too large`, "too_large");
+		chunks.push(chunk);
+	}
+	const bytes = new Uint8Array(total);
+	let offset = 0;
+	for (const chunk of chunks) {
+		bytes.set(chunk, offset);
+		offset += chunk.byteLength;
+	}
+	return bytes;
 }
 
 export async function failAsset(assetId: string, message: string): Promise<void> {
@@ -165,7 +193,8 @@ export async function importUrl(asset: Asset, url: string, headers: Record<strin
 	}
 	const contentType = contentTypeFor(response.headers.get("content-type"), target.pathname);
 	if (kindFor(contentType) === "other") {
-		throw new AppError(422, `Unsupported file type "${contentType}". Import images, video, audio or fonts.`, "unsupported_media");
+		const hint = /\.lottie$/i.test(target.pathname) ? " dotLottie (.lottie) files are not supported: import the Lottie JSON instead." : "";
+		throw new AppError(422, `Unsupported file type "${contentType}". Import images, video, audio, fonts or Lottie JSON.${hint}`, "unsupported_media");
 	}
 	const length = Number(response.headers.get("content-length"));
 	if (Number.isFinite(length) && length > 0) {
@@ -173,19 +202,7 @@ export async function importUrl(asset: Asset, url: string, headers: Record<strin
 		return storeAsset(asset, response.body, contentType);
 	}
 	// Unknown length: R2 needs a sized body, so buffer (with a cap).
-	const chunks: Uint8Array[] = [];
-	let total = 0;
-	for await (const chunk of response.body as unknown as AsyncIterable<Uint8Array>) {
-		total += chunk.byteLength;
-		if (total > MAX_BUFFERED_IMPORT_BYTES) throw new AppError(413, "File is too large to import without a known size (100 MB)", "too_large");
-		chunks.push(chunk);
-	}
-	const bytes = new Uint8Array(total);
-	let offset = 0;
-	for (const chunk of chunks) {
-		bytes.set(chunk, offset);
-		offset += chunk.byteLength;
-	}
+	const bytes = await readCapped(response.body, MAX_BUFFERED_IMPORT_BYTES, "A file without a known size over 100 MB");
 	return storeAsset(asset, bytes, contentType);
 }
 
@@ -280,11 +297,40 @@ export async function executeGeneration(assetId: string): Promise<Asset> {
 			});
 			return stored;
 		}
+		case "vector": {
+			const vector = await generateVector(spec);
+			const { bytes, contentType } = await download(vector.url, "The vector illustration");
+			const stored = await storeAsset(asset, bytes, contentType.includes("svg") ? "image/svg+xml" : contentType, {
+				meta: { model: vector.model, provider: "fal" },
+			});
+			await recordUsage({ ...usage, kind: "image", provider: "fal", model: vector.model, quantity: 1, unit: "images", costUsd: vector.costUsd, estimated: true });
+			return stored;
+		}
+		case "cutout": {
+			const source = (await assetsById(asset.projectId, [spec.sourceAssetId])).get(spec.sourceAssetId);
+			if (source?.status !== "ready" || source.kind !== "image" || !source.r2Key) {
+				throw new AppError(422, "The picture to cut out is missing or is not a still image", "invalid_state");
+			}
+			// Inline when small enough; otherwise a short-lived link the provider downloads from.
+			const image = (await assetDataUrl(source)) ?? (await signedUrl(source.r2Key, { expiresIn: 3600 }));
+			const cutout = await removeBackground(image);
+			const { bytes } = await download(cutout.url, "The cut-out");
+			const stored = await storeAsset(asset, bytes, "image/png", { meta: { model: cutout.model, provider: "fal", sourceAssetId: source.id } });
+			await recordUsage({ ...usage, kind: "image", provider: "fal", model: cutout.model, quantity: 1, unit: "images", costUsd: FAL_USD.cutout, estimated: true });
+			return stored;
+		}
 		case "url":
 			return importUrl(asset, spec.url, spec.headers);
 		case "video":
 			throw new AppError(500, "Video clips are generated by the asset workflow", "invalid_state");
 	}
+}
+
+/** Fetches a generated file from a provider's CDN. */
+async function download(url: string, what: string): Promise<{ bytes: Uint8Array; contentType: string }> {
+	const response = await fetch(url, { headers: { "user-agent": env.OUTBOUND_USER_AGENT } });
+	if (!response.ok) throw new AppError(502, `${what} could not be downloaded (${response.status})`, "upstream_error");
+	return { bytes: new Uint8Array(await response.arrayBuffer()), contentType: contentTypeFor(response.headers.get("content-type"), new URL(url).pathname) };
 }
 
 /** Starts the background workflow that fills in a pending asset. */

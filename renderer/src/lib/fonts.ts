@@ -47,6 +47,8 @@ export function collectText(timeline: Timeline): string {
 		if (c.stat) parts.push(c.stat.value, c.stat.prefix ?? "", c.stat.suffix ?? "", c.stat.label ?? "");
 		if (c.cta) parts.push(c.cta.text, c.cta.url ?? "");
 		if (c.lowerThird) parts.push(c.lowerThird.title, c.lowerThird.subtitle ?? "");
+		if (c.chart) parts.push(c.chart.prefix ?? "", c.chart.suffix ?? "", ...c.chart.points.map((point) => point.label));
+		for (const place of c.map?.places ?? []) parts.push(place.name);
 	}
 	for (const cue of timeline.captions) parts.push(cue.text, ...cue.words.map((w) => w.text));
 	const text = parts.join("");

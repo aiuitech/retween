@@ -27,7 +27,13 @@ const X264_PRESET = (process.env.RENDER_X264_PRESET ?? "veryfast") as X264Preset
 
 // Signed asset URLs are not CORS-enabled by default; the page only ever loads our own bundle and
 // the timeline's media, so web security buys nothing here and would force slower fallbacks.
-const chromiumOptions = { disableWebSecurity: true, enableMultiProcessOnLinux: true };
+// Map scenes draw with WebGL. In the container (no GPU) Chrome falls back to software WebGL by itself;
+// forcing "swangle" was measured slower for every scene (about 20% on plain scenes, 18% on maps at
+// 1080p on 4 CPUs), so Chrome picks unless RENDER_GL names a backend. If a future Chrome stops falling
+// back, map scenes still render (pins over the brand backdrop, with a warning) and RENDER_GL=swangle restores them.
+type Gl = "swangle" | "angle" | "egl" | "swiftshader" | "vulkan" | "angle-egl";
+const GL = (process.env.RENDER_GL || undefined) as Gl | undefined;
+const chromiumOptions = { disableWebSecurity: true, enableMultiProcessOnLinux: true, ...(GL ? { gl: GL } : {}) };
 
 export const log = (event: string, fields: Record<string, unknown> = {}) =>
 	console.log(JSON.stringify({ time: new Date().toISOString(), event, ...fields }));

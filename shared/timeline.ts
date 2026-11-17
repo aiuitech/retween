@@ -44,7 +44,7 @@ export function dimensionsFor(aspect: AspectRatio, resolution: Resolution): { wi
 		: { width: short, height: even((short * h) / w) };
 }
 
-export const SCENE_TYPES = ["title", "media", "bullets", "quote", "stat", "split", "outro"] as const;
+export const SCENE_TYPES = ["title", "media", "bullets", "quote", "stat", "split", "chart", "map", "outro"] as const;
 export type SceneType = (typeof SCENE_TYPES)[number];
 
 export const TRANSITIONS = ["cut", "fade", "slide-left", "slide-up", "wipe", "zoom"] as const;
@@ -106,6 +106,13 @@ export const TimelineBackground = z.discriminatedUnion("kind", [
 		fit: z.enum(["cover", "contain"]),
 		/** Point of interest, 0–1 from the top-left. Kept in frame when cropping. */
 		focus: z.object({ x: z.number(), y: z.number() }).optional(),
+		/** SVG only: trace the outlines, then fill the shapes in. */
+		draw: z.boolean().optional(),
+		/**
+		 * The picture's main subject on a transparent background. `parallax` moves it
+		 * in front of the picture for depth; `isolate` shows it alone on the brand backdrop.
+		 */
+		cutout: z.object({ src: z.string(), mode: z.enum(["parallax", "isolate"]) }).optional(),
 	}),
 	z.object({
 		kind: z.literal("video"),
@@ -122,17 +129,47 @@ export const TimelineBackground = z.discriminatedUnion("kind", [
 	z.object({ kind: z.literal("gradient"), colors: z.array(color).min(2), angle: z.number() }),
 	/** The renderer draws its own animated backdrop from the theme colours. */
 	z.object({ kind: z.literal("brand") }),
+	/** A Lottie (Bodymovin JSON) animation, played over the brand backdrop. */
+	z.object({ kind: z.literal("lottie"), src: z.string(), loop: z.boolean() }),
 ]);
 export type TimelineBackground = z.infer<typeof TimelineBackground>;
+
+/** An icon file. `mono` icons are drawn in the scene's text colours; others keep their own. */
+export const TimelineIcon = z.object({ src: z.string(), mono: z.boolean() });
+export type TimelineIcon = z.infer<typeof TimelineIcon>;
+
+export const TimelineChart = z.object({
+	kind: z.enum(["column", "bar", "line", "donut"]),
+	/** `atFrame` is relative to the scene start: the frame the item appears on. */
+	points: z.array(z.object({ label: z.string(), value: z.number(), atFrame: frame, highlight: z.boolean().optional() })).min(1),
+	prefix: z.string().optional(),
+	suffix: z.string().optional(),
+	decimals: z.number().int().min(0).max(4).optional(),
+	max: z.number().optional(),
+	showValues: z.boolean(),
+});
+export type TimelineChart = z.infer<typeof TimelineChart>;
+
+export const TimelineMap = z.object({
+	/** `atFrame` is relative to the scene start: the frame the pin drops (or, on a tour, the camera arrives). */
+	places: z.array(z.object({ name: z.string(), lat: z.number(), lng: z.number(), atFrame: frame })).min(1),
+	camera: z.enum(["overview", "tour"]),
+	route: z.boolean(),
+	zoom: z.number().optional(),
+	style: z.enum(["light", "dark"]),
+});
+export type TimelineMap = z.infer<typeof TimelineMap>;
 
 export const TimelineContent = z.object({
 	/** Small label above the heading. */
 	kicker: z.string().optional(),
+	/** Badge above the heading (or the stat). */
+	icon: TimelineIcon.optional(),
 	heading: z.string().optional(),
 	subheading: z.string().optional(),
 	body: z.string().optional(),
 	/** `atFrame` is relative to the scene start: the frame the bullet appears on. */
-	bullets: z.array(z.object({ text: z.string(), atFrame: frame })).optional(),
+	bullets: z.array(z.object({ text: z.string(), atFrame: frame, icon: TimelineIcon.optional() })).optional(),
 	quote: z.string().optional(),
 	attribution: z.string().optional(),
 	stat: z
@@ -149,6 +186,8 @@ export const TimelineContent = z.object({
 	cta: z.object({ text: z.string(), url: z.string().optional() }).optional(),
 	lowerThird: z.object({ title: z.string(), subtitle: z.string().optional() }).optional(),
 	showLogo: z.boolean().optional(),
+	chart: TimelineChart.optional(),
+	map: TimelineMap.optional(),
 });
 export type TimelineContent = z.infer<typeof TimelineContent>;
 
@@ -233,7 +272,11 @@ export function collectAssetRefs(timeline: Timeline): string[] {
 	add(timeline.theme.logo?.darkSrc);
 	add(timeline.theme.watermark?.src);
 	for (const scene of timeline.scenes) {
-		if (scene.background.kind === "image" || scene.background.kind === "video") add(scene.background.src);
+		const bg = scene.background;
+		if (bg.kind === "image" || bg.kind === "video" || bg.kind === "lottie") add(bg.src);
+		if (bg.kind === "image") add(bg.cutout?.src);
+		add(scene.content.icon?.src);
+		for (const bullet of scene.content.bullets ?? []) add(bullet.icon?.src);
 	}
 	for (const clip of timeline.audio) add(clip.src);
 	return [...refs];
@@ -252,13 +295,24 @@ export function resolveAssetRefs(timeline: Timeline, resolve: (assetId: string) 
 			},
 			watermark: timeline.theme.watermark && { ...timeline.theme.watermark, src: swap(timeline.theme.watermark.src) },
 		},
-		scenes: timeline.scenes.map((scene) => ({
-			...scene,
-			background:
-				scene.background.kind === "image" || scene.background.kind === "video"
-					? { ...scene.background, src: swap(scene.background.src) }
-					: scene.background,
-		})),
+		scenes: timeline.scenes.map((scene) => {
+			const bg = scene.background;
+			const icon = (value?: TimelineIcon) => value && { ...value, src: swap(value.src) };
+			return {
+				...scene,
+				background:
+					bg.kind === "image"
+						? { ...bg, src: swap(bg.src), cutout: bg.cutout && { ...bg.cutout, src: swap(bg.cutout.src) } }
+						: bg.kind === "video" || bg.kind === "lottie"
+							? { ...bg, src: swap(bg.src) }
+							: bg,
+				content: {
+					...scene.content,
+					icon: icon(scene.content.icon),
+					bullets: scene.content.bullets?.map((bullet) => ({ ...bullet, icon: icon(bullet.icon) })),
+				},
+			};
+		}),
 		audio: timeline.audio.map((clip) => ({ ...clip, src: swap(clip.src) })),
 	};
 }
