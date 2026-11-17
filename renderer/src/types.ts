@@ -55,4 +55,10 @@ export type Resolved = {
 };
 
 /** Props of the `Video` composition: the contract plus what the preflight added. */
-export type VideoProps = RenderProps & { resolved?: Resolved };
+export type VideoProps = RenderProps & {
+	resolved?: Resolved;
+	/** False leaves the audio out (contact-sheet tiles: a still has no sound). */
+	audio?: boolean;
+	/** Set on contact-sheet tiles: layout reports from this copy carry it, so they can be told apart. */
+	probe?: string;
+};

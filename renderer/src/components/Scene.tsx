@@ -606,12 +606,12 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 			) : null}
 			{cornerLogo}
 			{parts.length > 0 ? (
-				<FitBox rect={region} u={u} justify={textPosition} align={align} maxWidth={columnMax} fitKey={fitKey}>
+				<FitBox rect={region} u={u} justify={textPosition} align={align} maxWidth={columnMax} fitKey={fitKey} name={`${scene.id}/text`}>
 					{parts}
 				</FitBox>
 			) : null}
 			{c.lowerThird && lowerRect ? (
-				<FitBox rect={lowerRect} u={u} justify="bottom" align={align} fitKey={JSON.stringify(c.lowerThird)}>
+				<FitBox rect={lowerRect} u={u} justify="bottom" align={align} fitKey={JSON.stringify(c.lowerThird)} name={`${scene.id}/lower-third`}>
 					<LowerThird content={c.lowerThird} start={enterDelay + Math.round(beat)} overMedia={overMedia} pal={pal} />
 				</FitBox>
 			) : null}

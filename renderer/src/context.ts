@@ -18,6 +18,8 @@ export type RenderContext = {
 	caption: CaptionLayout | null;
 	/** Where the watermark sits, when there is a usable one. Scene content keeps clear of it. */
 	watermark: WatermarkBox | null;
+	/** Tags this copy's layout reports (see FitBox). Set on contact-sheet tiles. */
+	probe?: string;
 };
 
 const Ctx = createContext<RenderContext | null>(null);

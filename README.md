@@ -18,6 +18,7 @@ shared/            contracts used by every part
   storyboard.ts      what an author writes: scenes, no durations
   compose.ts         storyboard + measured media → timeline (pure function)
   timeline.ts        the render contract: absolute frames, resolution independent
+  inspect.ts         frames to look at, cue sheets, pacing / layout / sound checks (pure)
   narration.ts       pronunciation respelling and word timings
 src/worker/        the Cloudflare Worker
   ops/               every capability, defined once (name, description, zod input, handler)
@@ -35,6 +36,20 @@ migrations/        D1 schema
 An operation added to `src/worker/ops/` appears as an MCP tool, a CLI command and a REST endpoint with no further work.
 
 **Why timing is trustworthy.** Storyboards carry no durations. `video.prepare` generates narration (with word-level timestamps), stills, stock and sound effects first; then sizes clips and music to the voice; only then composes the timeline. Scene lengths, bullet cues, captions and music ducking are all derived from measured audio.
+
+**Checking work without rendering.** Agents read text and look at stills; they cannot watch an MP4 or hear a mix. So these ops turn video into images and numbers, run on the person's warm preview renderer and take seconds:
+
+| Op | What the agent gets |
+| --- | --- |
+| `video.preview` | One frame as an image, optionally the same frame in several aspect ratios side by side, or a trial version of a scene without saving it |
+| `video.sheet` | A contact sheet: every scene once it has settled, or N frames across a stretch to see an animation or transition |
+| `video.check` | Issues ranked by severity, with fixes: text that shrank or overflowed per aspect ratio (reported by `FitBox` while laid out at export size), fast narration, more text than time to read it, late reveals, dead air, unusable media |
+| `video.timing` | A cue sheet: scene times, narration lines with times and words a minute, when each bullet / chart value / place / sound effect lands, music ducking, unvoiced stretches |
+| `video.audio` | The mix measured like a platform would: BS.1770 loudness per stem and scene, peaks and clipping, voice-over-music balance, narration level jumps, silences. Clips are decoded with Remotion's ffmpeg and mixed with the renderer's own `volumeAt`; it matches a real render within about 0.2 LU |
+| `video.draft` | A low-res MP4 of a stretch (ultrafast encode on the preview renderer), for motion and for showing a person |
+| `asset.view`, `stock.search` `preview` | Pictures and clips (as frame strips) on one numbered sheet, so media is chosen by eye |
+
+Sheets are a second Remotion composition (`renderer/src/Sheet.tsx`): each tile is the video laid out at full export size, frozen on one frame and scaled down with a transform, so one page load covers many frames and text fits exactly as in the export.
 
 **Infrastructure.** Worker + static assets, D1 (`retween`), R2 (`retween-media`, private; files are served through signed URLs), four Workflows (asset, pipeline, render, publish), and a Durable Object-backed Container (`standard-4`, one instance per render, stopped when the render finishes).
 

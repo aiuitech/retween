@@ -130,7 +130,7 @@ async function probeWithMediabunny(kind: "video" | "audio", src: string): Promis
 	}
 }
 
-async function probe(kind: MediaInfo["kind"], src: string, cutout = false): Promise<MediaInfo> {
+export async function probe(kind: MediaInfo["kind"], src: string, cutout = false): Promise<MediaInfo> {
 	try {
 		if (!/^(https?:|data:|blob:|\/)/.test(src)) throw new Error("not a fetchable URL");
 		if (kind === "image") return await probeImage(src, cutout);

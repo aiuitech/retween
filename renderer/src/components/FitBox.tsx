@@ -1,6 +1,8 @@
 import type React from "react";
 import { useLayoutEffect, useRef, useState } from "react";
+import { useRender } from "../context.ts";
 import type { Rect } from "../lib/layout.ts";
+import { FIT_REPORT_PREFIX, type FitReport } from "../lib/report.ts";
 
 const MIN_SCALE = 0.3;
 
@@ -20,6 +22,8 @@ const MIN_SCALE = 0.3;
  * nearest `data-block` ancestor. If the content still does not fit at the
  * minimum scale, the whole block is scaled down as a last resort - text is
  * never clipped.
+ *
+ * Whenever it shrinks anything it logs a `FitReport` (see FIT_REPORT_PREFIX).
  */
 export const FitBox: React.FC<{
 	rect: Rect;
@@ -31,8 +35,11 @@ export const FitBox: React.FC<{
 	maxWidth?: number;
 	/** Changes whenever the content that affects layout changes. */
 	fitKey: string;
+	/** Names this box in layout reports, e.g. `intro/text`. */
+	name: string;
 	children: React.ReactNode;
-}> = ({ rect, u, justify, align, maxWidth, fitKey, children }) => {
+}> = ({ rect, u, justify, align, maxWidth, fitKey, name, children }) => {
+	const { probe } = useRender();
 	const inner = useRef<HTMLDivElement>(null);
 	const [fit, setFit] = useState({ scale: 1, squash: 1 });
 	const width = Math.min(rect.w, maxWidth ?? rect.w);
@@ -71,7 +78,11 @@ export const FitBox: React.FC<{
 		el.style.setProperty("--u", `${u * scale}px`);
 		el.style.transform = squash < 1 ? `scale(${squash})` : "none";
 		setFit((prev) => (prev.scale === scale && prev.squash === squash ? prev : { scale, squash }));
-	}, [fitKey, u, rect.h, width]);
+		if (scale < 0.995 || squash < 0.995) {
+			const report: FitReport = { probe, box: name, scale: Math.round(scale * 1000) / 1000, squash: Math.round(squash * 1000) / 1000 };
+			console.log(FIT_REPORT_PREFIX + JSON.stringify(report));
+		}
+	}, [fitKey, u, rect.h, width, name, probe]);
 
 	const origin = `${align === "center" ? "center" : "left"} ${justify}`;
 	return (

@@ -5,11 +5,11 @@ import { composeTimeline } from "../../../shared/compose.ts";
 import { EMPTY_STORYBOARD, Scene, Storyboard } from "../../../shared/storyboard.ts";
 import { ASPECT_RATIOS, RESOLUTIONS } from "../../../shared/timeline.ts";
 import { db, schema } from "../db/client.ts";
-import { AppError, badRequest, bytesToBase64, newId, notFound, sha256Hex } from "../lib/util.ts";
+import { AppError, badRequest, newId, notFound } from "../lib/util.ts";
 import { assetsById } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
-import { createRender, freshTimeline, getRender, previewFrame, renderView } from "../services/renders.ts";
-import { deletePrefix, signedUrl } from "../services/storage.ts";
+import { createRender, freshTimeline, getRender, renderView } from "../services/renders.ts";
+import { deletePrefix } from "../services/storage.ts";
 import { getControls, limitResolution } from "../services/controls.ts";
 import { assertBudget } from "../services/usage.ts";
 import {
@@ -25,7 +25,7 @@ import {
 	videoSummary,
 } from "../services/videos.ts";
 import type { Project } from "../services/projects.ts";
-import { INLINE_IMAGE, defineOp, waitSeconds } from "./registry.ts";
+import { defineOp, waitSeconds } from "./registry.ts";
 
 const videoId = z.string().describe("Video id (vid_…)");
 const aspect = z.enum(ASPECT_RATIOS);
@@ -306,35 +306,6 @@ export const videoOps = [
 				note: todo.length
 					? "Generated clips cost far more than anything else here. Everything else is cheap (icons, charts and maps are free)."
 					: "Nothing to generate: all media for the current storyboard already exists.",
-			};
-		},
-	}),
-
-	defineOp({
-		name: "video.preview",
-		title: "Preview a frame",
-		description:
-			"Render one frame of the video as an image so you can look at the layout, text fit and branding before paying for media or a full render. " +
-			"Works at any stage: scenes whose media does not exist yet show the brand backdrop. Pick a scene, or a time in seconds.",
-		input: z.object({
-			videoId,
-			sceneId: z.string().optional().describe("Preview this scene (late in the scene, once its text has appeared)"),
-			seconds: z.number().min(0).optional().describe("Or preview this moment of the video"),
-			aspect: aspect.optional().describe("Defaults to the video's primary aspect ratio"),
-		}),
-		readOnly: true,
-		handler: async (input, { actor }) => {
-			const { video, project } = await getVideo(actor, input.videoId);
-			const frame = await previewFrame(actor, video, project, { aspect: input.aspect ?? video.aspect, sceneId: input.sceneId, seconds: input.seconds });
-			const key = `projects/${project.id}/previews/${video.id}-${(await sha256Hex(frame.bytes)).slice(0, 16)}.jpg`;
-			await env.MEDIA.put(key, frame.bytes, { httpMetadata: { contentType: frame.contentType } });
-			return {
-				sceneId: frame.sceneId,
-				seconds: frame.seconds,
-				aspect: input.aspect ?? video.aspect,
-				url: await signedUrl(key, { expiresIn: 3600 }),
-				warnings: frame.warnings,
-				[INLINE_IMAGE]: { base64: bytesToBase64(frame.bytes), mimeType: frame.contentType },
 			};
 		},
 	}),

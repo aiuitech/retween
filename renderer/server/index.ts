@@ -3,16 +3,34 @@
  *
  *   GET  /ping     -> 200 "ok"
  *   POST /render   -> 202 { jobId }   (409 while a render is running, 400 on bad input)
- *   GET  /status   -> job state and progress
- *   GET  /output   -> the finished MP4, with Range support
+ *   GET  /status   -> job state and progress (?jobId= for one of the last few jobs)
+ *   GET  /output   -> the finished MP4, with Range support (?jobId= likewise)
  *   POST /still    -> one frame as JPEG / PNG
+ *   POST /sheet    -> a contact sheet (many frames or media files on one image), as JSON
+ *   POST /audio    -> loudness, balance and silence measurements of a timeline's mix, as JSON
  *   POST /cancel   -> stops the running render
  */
 import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { pipeline } from "node:stream/promises";
-import { RenderProps } from "../../shared/timeline.ts";
-import { availableCpus, BUNDLE_DIR, cancelRender, defaultConcurrency, getBrowser, getOutputPath, getStatus, log, renderStillImage, shutdown, startRender } from "./engine.ts";
+import { RenderProps, Timeline } from "../../shared/timeline.ts";
+import type { SheetTile } from "../src/Sheet.tsx";
+import { analyseAudio } from "./audio.ts";
+import {
+	availableCpus,
+	BUNDLE_DIR,
+	cancelRender,
+	defaultConcurrency,
+	getBrowser,
+	getJobStatus,
+	getOutputPath,
+	getStatus,
+	log,
+	renderSheetImage,
+	renderStillImage,
+	shutdown,
+	startRender,
+} from "./engine.ts";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const HOST = process.env.HOST ?? "0.0.0.0";
@@ -100,15 +118,30 @@ async function handleRender(req: IncomingMessage, res: ServerResponse) {
 	if (typeof options !== "object" || Array.isArray(options)) throw new HttpError(400, "options must be an object");
 	const crf = options.crf === undefined ? undefined : int(options.crf, "options.crf", 1, 51);
 	const concurrency = options.concurrency === undefined ? undefined : int(options.concurrency, "options.concurrency", 1, 32);
+	if (options.draft !== undefined && typeof options.draft !== "boolean") throw new HttpError(400, "options.draft must be a boolean");
+	let frameRange: [number, number] | undefined;
+	if (options.frameRange !== undefined) {
+		const range = options.frameRange;
+		if (!Array.isArray(range) || range.length !== 2) throw new HttpError(400, "options.frameRange must be [first, last]");
+		const last = props.timeline.durationInFrames - 1;
+		frameRange = [int(range[0], "options.frameRange[0]", 0, last), int(range[1], "options.frameRange[1]", 0, last)];
+		if (frameRange[1] < frameRange[0]) throw new HttpError(400, "options.frameRange must not end before it starts");
+	}
 
 	// Checked last and synchronously before starting, so two racing requests cannot both get in.
 	if (getStatus().state === "rendering") throw new HttpError(409, `a render is already running (jobId ${getStatus().jobId})`);
-	startRender(body.jobId, props, { crf, concurrency });
+	startRender(body.jobId, props, { crf, concurrency, draft: options.draft === true, frameRange });
 	json(res, 202, { jobId: body.jobId });
 }
 
+/** Stills and sheets wait for a full render to finish, but run alongside a draft (which leaves a core free for them). */
+function assertStillsAllowed() {
+	const current = getStatus();
+	if (current.state === "rendering" && !current.draft) throw new HttpError(409, "a render is running; stills are available when it finishes");
+}
+
 async function handleStill(req: IncomingMessage, res: ServerResponse) {
-	if (getStatus().state === "rendering") throw new HttpError(409, "a render is running; stills are available when it finishes");
+	assertStillsAllowed();
 	const body = await readJson(req);
 	const props = parseProps(body.props);
 	const frame = int(body.frame, "frame", 0, props.timeline.durationInFrames - 1);
@@ -129,8 +162,90 @@ async function handleStill(req: IncomingMessage, res: ServerResponse) {
 	res.end(buffer);
 }
 
+const MAX_SHEET_TILES = 32;
+
+function parseTile(input: unknown, i: number): SheetTile {
+	if (!input || typeof input !== "object") throw new HttpError(400, `tiles[${i}] must be an object`);
+	const tile = input as Record<string, unknown>;
+	const label = tile.label === undefined ? undefined : String(tile.label).slice(0, 120);
+	const src = () => {
+		if (typeof tile.src !== "string" || !/^(https?:|data:)/.test(tile.src)) throw new HttpError(400, `tiles[${i}].src must be an http(s) URL`);
+		if (tile.src.startsWith("asset://")) throw new HttpError(400, `tiles[${i}].src is an unresolved asset reference`);
+		return tile.src;
+	};
+	switch (tile.kind) {
+		case "frame": {
+			const width = int(tile.width, `tiles[${i}].width`, 16, 4096);
+			const height = int(tile.height, `tiles[${i}].height`, 16, 4096);
+			return { kind: "frame", frame: int(tile.frame, `tiles[${i}].frame`, 0, 10_000_000), width, height, label };
+		}
+		case "image":
+			return { kind: "image", src: src(), label };
+		case "video": {
+			const atSec = tile.atSec ?? 0;
+			if (typeof atSec !== "number" || !(atSec >= 0)) throw new HttpError(400, `tiles[${i}].atSec must be a number of seconds`);
+			return { kind: "video", src: src(), atSec, label };
+		}
+		default:
+			throw new HttpError(400, `tiles[${i}].kind must be "frame", "image" or "video"`);
+	}
+}
+
+async function handleSheet(req: IncomingMessage, res: ServerResponse) {
+	assertStillsAllowed();
+	const body = await readJson(req);
+	if (!Array.isArray(body.tiles) || body.tiles.length === 0 || body.tiles.length > MAX_SHEET_TILES) throw new HttpError(400, `tiles must be an array of 1-${MAX_SHEET_TILES} tiles`);
+	const tiles = body.tiles.map(parseTile);
+	let timeline: Timeline | undefined;
+	if (tiles.some((tile) => tile.kind === "frame")) {
+		// The same checks a render gets, with the first frame tile's size standing in for the export's.
+		const first = tiles.find((tile) => tile.kind === "frame")!;
+		timeline = parseProps({ timeline: body.timeline, width: first.width, height: first.height }).timeline;
+		for (const tile of tiles) {
+			if (tile.kind === "frame" && tile.frame >= timeline.durationInFrames) throw new HttpError(400, `frame ${tile.frame} is out of range: the timeline has ${timeline.durationInFrames} frames`);
+		}
+	}
+	const tileHeight = body.tileHeight === undefined ? 240 : int(body.tileHeight, "tileHeight", 48, 2160);
+	const maxWidth = body.maxWidth === undefined ? 1600 : int(body.maxWidth, "maxWidth", 160, 4096);
+	const format = body.format ?? "jpeg";
+	if (format !== "jpeg" && format !== "png") throw new HttpError(400, 'format must be "jpeg" or "png"');
+	const quality = body.quality === undefined ? 82 : int(body.quality, "quality", 30, 100);
+	const bare = body.bare === true && tiles.length === 1;
+
+	const result = await renderSheetImage({ timeline, tiles, tileHeight, maxWidth, bare }, { format, quality });
+	json(res, 200, {
+		image: result.buffer.toString("base64"),
+		contentType: result.contentType,
+		width: result.width,
+		height: result.height,
+		tiles: result.tiles,
+		failed: result.failed,
+		fits: result.fits,
+		warnings: result.warnings,
+	});
+}
+
+async function handleAudio(req: IncomingMessage, res: ServerResponse) {
+	const body = await readJson(req);
+	const parsed = Timeline.safeParse(body.timeline);
+	if (!parsed.success) throw new HttpError(400, `invalid timeline - ${parsed.error.issues.slice(0, 6).map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+	const timeline = parsed.data;
+	const unresolved = timeline.audio.find((clip) => clip.src.startsWith("asset://"));
+	if (unresolved) throw new HttpError(400, `"${unresolved.src}" is an unresolved asset reference`);
+	const last = timeline.durationInFrames;
+	const fromFrame = body.fromFrame === undefined ? undefined : int(body.fromFrame, "fromFrame", 0, last);
+	const toFrame = body.toFrame === undefined ? undefined : int(body.toFrame, "toFrame", 1, last);
+	const started = Date.now();
+	const analysis = await analyseAudio(timeline, { fromFrame, toFrame, profile: body.profile === true });
+	log("audio.done", { seconds: analysis.analysedSec, clips: timeline.audio.length, skipped: analysis.skipped.length, elapsedMs: Date.now() - started });
+	json(res, 200, analysis);
+}
+
+/** `?jobId=` picks one of the last few jobs; without it, the current one. */
+const jobIdOf = (req: IncomingMessage) => new URL(req.url ?? "/", "http://localhost").searchParams.get("jobId") ?? undefined;
+
 async function handleOutput(req: IncomingMessage, res: ServerResponse) {
-	const file = getOutputPath();
+	const file = getOutputPath(jobIdOf(req));
 	if (!file || !fs.existsSync(file)) throw new HttpError(404, "no finished output");
 	const { size } = fs.statSync(file);
 	const base = { "content-type": "video/mp4", "accept-ranges": "bytes", "cache-control": "no-store" };
@@ -173,13 +288,18 @@ const routes: Record<string, Partial<Record<string, (req: IncomingMessage, res: 
 		},
 	},
 	"/status": {
-		GET: (_req, res) => {
-			const { warnings, ...status } = getStatus();
+		GET: (req, res) => {
+			const jobId = jobIdOf(req);
+			const current = jobId ? getJobStatus(jobId) : getStatus();
+			if (!current) throw new HttpError(404, `no job ${jobId} on this instance (it may have restarted)`);
+			const { warnings, ...status } = current;
 			json(res, 200, warnings.length ? { ...status, warnings } : status);
 		},
 	},
 	"/render": { POST: handleRender },
 	"/still": { POST: handleStill },
+	"/sheet": { POST: handleSheet },
+	"/audio": { POST: handleAudio },
 	"/output": { GET: handleOutput, HEAD: handleOutput },
 	"/cancel": { POST: async (_req, res) => json(res, 200, { cancelled: await cancelRender() }) },
 };

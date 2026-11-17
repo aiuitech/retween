@@ -2,6 +2,7 @@ import "@fontsource-variable/inter/wght.css";
 import type React from "react";
 import { type CalculateMetadataFunction, Composition } from "remotion";
 import { preflight } from "./lib/preflight.ts";
+import { SHEET_FPS, SheetComposition, type SheetProps, calculateSheetMetadata } from "./Sheet.tsx";
 import type { VideoProps } from "./types.ts";
 import { VideoComposition } from "./Video.tsx";
 
@@ -41,10 +42,11 @@ const defaultProps: VideoProps = {
 /**
  * Sizes the composition from the props and runs the preflight (media probing
  * and font resolution) exactly once per render, before any frame is drawn.
+ * A caller that already has the preflight result (stills reuse it) passes it in.
  */
 const calculateMetadata: CalculateMetadataFunction<VideoProps> = async ({ props }) => {
 	const { timeline, width, height } = props;
-	const resolved = await preflight(props);
+	const resolved = props.resolved ?? (await preflight(props));
 	return {
 		width,
 		height,
@@ -56,15 +58,35 @@ const calculateMetadata: CalculateMetadataFunction<VideoProps> = async ({ props 
 	};
 };
 
+const defaultSheetProps: SheetProps = {
+	timeline: defaultProps.timeline,
+	tiles: [0, 45, 89].map((frame) => ({ kind: "frame" as const, frame, width: 1280, height: 720, label: `frame ${frame}` })),
+	tileHeight: 220,
+	maxWidth: 1600,
+};
+
 export const Root: React.FC = () => (
-	<Composition
-		id="Video"
-		component={VideoComposition}
-		width={defaultProps.width}
-		height={defaultProps.height}
-		fps={defaultProps.timeline.fps}
-		durationInFrames={defaultProps.timeline.durationInFrames}
-		defaultProps={defaultProps}
-		calculateMetadata={calculateMetadata}
-	/>
+	<>
+		<Composition
+			id="Video"
+			component={VideoComposition}
+			width={defaultProps.width}
+			height={defaultProps.height}
+			fps={defaultProps.timeline.fps}
+			durationInFrames={defaultProps.timeline.durationInFrames}
+			defaultProps={defaultProps}
+			calculateMetadata={calculateMetadata}
+		/>
+		{/* Contact sheets: many frames or media files on one still (see Sheet.tsx). */}
+		<Composition
+			id="Sheet"
+			component={SheetComposition}
+			width={1600}
+			height={900}
+			fps={SHEET_FPS}
+			durationInFrames={1}
+			defaultProps={defaultSheetProps}
+			calculateMetadata={calculateSheetMetadata}
+		/>
+	</>
 );

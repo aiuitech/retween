@@ -4,18 +4,19 @@ import { z } from "zod";
 import { ASPECT_RATIOS } from "../../../shared/timeline.ts";
 import { db, schema } from "../db/client.ts";
 import { ASSET_KINDS, type GenerationSpec } from "../db/schema.ts";
-import { badRequest } from "../lib/util.ts";
+import { badRequest, bytesToBase64 } from "../lib/util.ts";
 import { listVoices } from "../providers/elevenlabs.ts";
 import { IMAGE_ASPECTS, VIDEO_RESOLUTIONS } from "../providers/openrouter.ts";
 import { searchIcons, searchPlaces } from "../providers/iconify.ts";
 import { STOCK_PROVIDERS, availableProviders, getStockItem, searchStock } from "../providers/stock.ts";
 import { type Asset, assetView, createAsset, deleteAsset, getAsset, startGeneration, waitForAssets } from "../services/assets.ts";
+import { renderSheet } from "../services/inspect.ts";
 import { getProject } from "../services/projects.ts";
 import { signedUploadUrl } from "../services/storage.ts";
 import { enforceControls } from "../services/controls.ts";
 import { assertBudget } from "../services/usage.ts";
 import { imageReferenceIds, narrationSpec, styledImagePrompt } from "../services/videos.ts";
-import { defineOp, waitSeconds } from "./registry.ts";
+import { INLINE_IMAGE, defineOp, waitSeconds } from "./registry.ts";
 
 const projectId = z.string().describe("Project id (prj_…)");
 const tags = z
@@ -380,19 +381,32 @@ export const assetOps = [
 		description:
 			"Search free stock photos, footage and audio that may be used commercially and modified (public domain, attribution-only and stock-site licences; " +
 			"share-alike and non-commercial material is left out). Each result states its licence and whether it must be credited. " +
-			"Import a result with stock.import. Free stock is the cheapest way to fill a scene: reach for it before generating video.",
+			"Import a result with stock.import. Free stock is the cheapest way to fill a scene: reach for it before generating video. " +
+			"Set preview to see the results as one numbered contact sheet, so you can pick by eye rather than by title.",
 		input: z.object({
 			query: z.string().min(2).max(200),
 			media: z.enum(["image", "video", "audio"]).default("image"),
 			orientation: z.enum(["landscape", "portrait", "square"]).optional(),
 			provider: z.enum(STOCK_PROVIDERS).optional().describe("Search one source only"),
 			limit: z.number().int().min(1).max(30).default(12),
+			preview: z.boolean().default(false).describe("Also return the results' thumbnails as one numbered image (images and video; takes a few seconds)"),
 		}),
 		readOnly: true,
-		handler: async (input) => {
-			const result = await searchStock(input);
+		handler: async ({ preview, ...query }, { actor }) => {
+			const result = await searchStock(query);
+			const shown = preview ? result.items.filter((item) => item.previewUrl) : [];
+			const sheet = shown.length
+				? await renderSheet(actor, {
+						storeAs: `users/${actor.id}/previews/stock`,
+						tiles: shown.map((item, i) => ({ kind: "image" as const, src: item.previewUrl!, label: `${i + 1}. ${item.provider} · ${item.title}` })),
+						tileHeight: 180,
+						maxWidth: 1600,
+						quality: 75,
+					})
+				: null;
 			return {
 				results: result.items.map((item) => ({
+					...(sheet ? { n: shown.indexOf(item) + 1 || undefined } : {}),
 					provider: item.provider,
 					id: item.id,
 					media: item.media,
@@ -408,7 +422,8 @@ export const assetOps = [
 				})),
 				searched: result.searched,
 				...(result.failed.length ? { failed: result.failed } : {}),
-				sources: { available: availableProviders(input.media) },
+				sources: { available: availableProviders(query.media) },
+				...(sheet ? { previewSheet: sheet.url, [INLINE_IMAGE]: { base64: bytesToBase64(sheet.bytes), mimeType: sheet.contentType } } : {}),
 			};
 		},
 	}),

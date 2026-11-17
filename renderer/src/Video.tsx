@@ -86,8 +86,9 @@ export const VideoComposition: React.FC<VideoProps> = (props) => {
 			resolved,
 			caption: theme.captions.enabled && timeline.captions.length > 0 ? captionLayout(frame, theme.captions, wmBox) : null,
 			watermark: wmBox,
+			probe: props.probe,
 		};
-	}, [resolved, timeline, width, height]);
+	}, [resolved, timeline, width, height, props.probe]);
 
 	if (!ctx) return <AbsoluteFill style={{ background: timeline.theme.colors.background }} />;
 
@@ -109,7 +110,7 @@ export const VideoComposition: React.FC<VideoProps> = (props) => {
 				})}
 				<Watermark />
 				<Captions />
-				<AudioLayer />
+				{props.audio === false ? null : <AudioLayer />}
 			</AbsoluteFill>
 		</RenderProvider>
 	);
