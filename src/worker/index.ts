@@ -1,14 +1,14 @@
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { type Actor, actorFromRequest, assertActive, auth } from "./auth/index.ts";
+import { type Actor, actorById, actorFromRequest, assertActive, auth } from "./auth/index.ts";
 import { AppError, badRequest } from "./lib/util.ts";
 import { opsFor, ops, runOp } from "./ops/index.ts";
 import { INLINE_IMAGE, manifestEntry } from "./ops/registry.ts";
 import { handleMcp } from "./routes/mcp.ts";
 import { assetView, createAsset, storeAsset } from "./services/assets.ts";
 import { getProject } from "./services/projects.ts";
-import { contentTypeFor, kindFor, serveObject, verifySignedUrl } from "./services/storage.ts";
+import { contentTypeFor, kindFor, serveObject, verifySignedUrl, verifyUploadUrl } from "./services/storage.ts";
 import { budgetStatus } from "./services/usage.ts";
 
 export { Renderer } from "./renderer.ts";
@@ -144,25 +144,51 @@ app.post("/api/v1/ops/:name", async (c) => {
 	return c.json({ ok: true, result });
 });
 
-/** Upload a local file as an asset: the raw file is the request body. */
-app.put("/api/v1/projects/:projectId/assets", async (c) => {
-	const actor = await requireActor(c.req.raw);
-	const project = await getProject(actor, c.req.param("projectId"));
-	const name = c.req.query("name") ?? "upload";
-	const contentType = contentTypeFor(c.req.header("content-type"), name);
-	if (kindFor(contentType) === "other") throw badRequest(`Unsupported file type "${contentType}". Upload images, video, audio or fonts.`);
-	if (!c.req.raw.body || !c.req.header("content-length")) throw new AppError(411, "Send the file as the request body with a Content-Length", "length_required");
+/** Stores a request body as a new asset in a project. Shared by both upload routes. */
+async function receiveUpload(request: Request, actor: Actor, projectId: string) {
+	const project = await getProject(actor, projectId);
+	const query = new URL(request.url).searchParams;
+	const name = query.get("name") ?? "upload";
+	const contentType = contentTypeFor(request.headers.get("content-type"), name);
+	if (kindFor(contentType) === "other") {
+		throw badRequest(
+			contentType === "application/octet-stream"
+				? "Could not tell what kind of file this is. Add ?name=<file name with its extension> (e.g. name=logo.png) or send a Content-Type."
+				: `Unsupported file type "${contentType}". Upload images, video, audio or fonts.`,
+		);
+	}
+	if (!request.body || !request.headers.get("content-length")) throw new AppError(411, "Send the file as the request body with a Content-Length", "length_required");
 	const asset = await createAsset({
 		projectId: project.id,
 		createdBy: actor.id,
 		kind: kindFor(contentType),
 		name,
-		description: c.req.query("description"),
+		description: query.get("description") ?? undefined,
 		source: "upload",
-		tags: c.req.query("tags")?.split(",").map((tag) => tag.trim()).filter(Boolean),
+		tags: query.get("tags")?.split(",").map((tag) => tag.trim()).filter(Boolean),
 	});
-	const stored = await storeAsset(asset, c.req.raw.body, contentType);
-	return c.json({ ok: true, result: { asset: await assetView(stored) } });
+	const stored = await storeAsset(asset, request.body, contentType);
+	return { ok: true, result: { asset: await assetView(stored) } };
+}
+
+/** Upload a local file as an asset: the raw file is the request body. */
+app.put("/api/v1/projects/:projectId/assets", async (c) => {
+	const actor = await requireActor(c.req.raw);
+	return c.json(await receiveUpload(c.req.raw, actor, c.req.param("projectId")));
+});
+
+/**
+ * Upload through a signed link from asset.upload_link, with no sign-in: how an
+ * agent connected over MCP hands over files it has locally. The file is
+ * stored as the user who asked for the link, who must still be active and own
+ * the project.
+ */
+app.put("/api/uploads/:grant", async (c) => {
+	const grant = await verifyUploadUrl(new URL(c.req.url));
+	if (!grant) throw new AppError(403, "This upload link has expired or is not valid. Ask for a new one with asset.upload_link.", "invalid_link");
+	const actor = await actorById(grant.userId, "upload-link");
+	assertActive(actor);
+	return c.json(await receiveUpload(c.req.raw, actor, grant.projectId));
 });
 
 app.all("/api/*", (c) => c.json({ ok: false, error: { code: "not_found", message: "No such endpoint" } }, 404));

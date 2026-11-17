@@ -34,7 +34,7 @@ export interface Actor {
 	banned: boolean;
 	monthlyBudgetCents: number;
 	/** How the caller authenticated. */
-	via: "session" | "api-key" | "oauth";
+	via: "session" | "api-key" | "oauth" | "upload-link";
 }
 
 type UserRow = typeof schema.user.$inferSelect;

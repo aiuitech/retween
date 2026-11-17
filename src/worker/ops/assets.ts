@@ -10,6 +10,7 @@ import { IMAGE_ASPECTS, VIDEO_RESOLUTIONS } from "../providers/openrouter.ts";
 import { STOCK_PROVIDERS, availableProviders, getStockItem, searchStock } from "../providers/stock.ts";
 import { type Asset, assetView, createAsset, deleteAsset, getAsset, startGeneration, waitForAssets } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
+import { signedUploadUrl } from "../services/storage.ts";
 import { assertBudget } from "../services/usage.ts";
 import { imageReferenceIds, narrationSpec, styledImagePrompt } from "../services/videos.ts";
 import { defineOp, waitSeconds } from "./registry.ts";
@@ -113,17 +114,25 @@ export const assetOps = [
 		name: "asset.upload_link",
 		title: "Upload link",
 		description:
-			"A link to give the person you are working with so they can upload their own files (logo, photos, footage, voiceover, music, fonts) into a project from their browser. " +
-			"You cannot receive their files directly: send them this link, ask them to say when they are done, then find the new assets with asset.list. " +
-			"From a shell the CLI also uploads: `retween asset upload <file…> --project <id>`.",
-		input: z.object({ projectId }),
+			"Two ways to get files that are not on the web (logo, photos, footage, voiceover, music, fonts) into a project. " +
+			"`uploadUrl` is for you: if you can run commands and have the files locally, upload each one with no sign-in: " +
+			'`curl -T <file> "<uploadUrl>&name=<file name>"` (add `&tags=logo,reference` or `&description=…` as wanted); each upload returns the new asset. ' +
+			"`pageUrl` is for the person you are working with: they open it in their browser, signed in to Retween, and drop files in; ask them to say when they are done, then find the files with asset.list. " +
+			"The upload URL works until it expires and can only add files to this project, so do not share it more widely than needed.",
+		input: z.object({
+			projectId,
+			expiresInMinutes: z.number().int().min(5).max(24 * 60).default(60).describe("How long the upload URL keeps working"),
+		}),
 		readOnly: true,
 		handler: async (input, { actor }) => {
 			const project = await getProject(actor, input.projectId);
+			const upload = await signedUploadUrl(project.id, actor.id, input.expiresInMinutes * 60);
 			return {
-				url: `${env.APP_URL}/projects/${encodeURIComponent(project.id)}`,
-				accepts: "Images, video, audio and fonts, several at once. The person must be signed in to Retween with the account that owns the project.",
-				afterwards: `asset.list with projectId ${project.id} shows what they uploaded (source "upload").`,
+				uploadUrl: upload.url,
+				expiresAt: upload.expiresAt.toISOString(),
+				example: `curl -T logo.png "${upload.url}&name=logo.png&tags=logo"`,
+				pageUrl: `${env.APP_URL}/projects/${encodeURIComponent(project.id)}`,
+				accepts: "Images, video, audio and fonts. Name each file with its extension so its type is clear.",
 			};
 		},
 	}),
