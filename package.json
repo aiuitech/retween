@@ -7,6 +7,7 @@
 		"build": "cf build",
 		"deploy": "npm run build:cli && cf deploy",
 		"typecheck": "cf workers types && tsc",
+		"test": "node --test shared/",
 		"build:cli": "node cli/build.mjs",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate:local": "cf d1 migrations apply 202514c9-ef9c-4055-a818-9147862d5554 --local",

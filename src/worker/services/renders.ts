@@ -10,6 +10,8 @@ import {
 	type Timeline,
 	collectAssetRefs,
 	dimensionsFor,
+	dropMissingAssetRefs,
+	resolveAssetRefs,
 } from "../../../shared/timeline.ts";
 import type { Actor } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
@@ -105,9 +107,11 @@ export async function createRender(
 }
 
 /**
- * Swaps `asset://` references for signed URLs the container can fetch. Media
- * that has been deleted since the timeline was composed is dropped rather than
- * left dangling: a scene falls back to the brand backdrop, an audio clip is removed.
+ * Swaps every `asset://` reference (logo, watermark, backgrounds, cutouts,
+ * Lottie, icons, audio) for a signed URL the container can fetch. Media that
+ * has been deleted since the timeline was composed is dropped rather than left
+ * dangling: a scene falls back to the brand backdrop, an audio clip is removed,
+ * and a logo, watermark, cutout or icon is left out.
  */
 export async function resolveTimeline(projectId: string, timeline: Timeline, expiresIn = 6 * 3600): Promise<Timeline> {
 	const assets = await assetsById(projectId, collectAssetRefs(timeline));
@@ -115,26 +119,10 @@ export async function resolveTimeline(projectId: string, timeline: Timeline, exp
 	for (const asset of assets.values()) {
 		if (asset.status === "ready" && asset.r2Key) urls.set(asset.id, await signedUrl(asset.r2Key, { expiresIn }));
 	}
-	const url = (src: string | undefined) => (src?.startsWith("asset://") ? urls.get(src.slice("asset://".length)) : src);
-	const logo = timeline.theme.logo && url(timeline.theme.logo.src);
-	const watermark = timeline.theme.watermark && url(timeline.theme.watermark.src);
-	return {
-		...timeline,
-		theme: {
-			...timeline.theme,
-			logo: logo ? { src: logo, darkSrc: url(timeline.theme.logo!.darkSrc) } : undefined,
-			watermark: watermark ? { ...timeline.theme.watermark!, src: watermark } : undefined,
-		},
-		scenes: timeline.scenes.map((scene) => {
-			if (scene.background.kind !== "image" && scene.background.kind !== "video") return scene;
-			const src = url(scene.background.src);
-			return src ? { ...scene, background: { ...scene.background, src } } : { ...scene, background: { kind: "brand" as const } };
-		}),
-		audio: timeline.audio.flatMap((clip) => {
-			const src = url(clip.src);
-			return src ? [{ ...clip, src }] : [];
-		}),
-	};
+	return resolveAssetRefs(
+		dropMissingAssetRefs(timeline, (id) => urls.has(id)),
+		(id) => urls.get(id)!,
+	);
 }
 
 export async function renderProps(render: Render): Promise<RenderProps> {

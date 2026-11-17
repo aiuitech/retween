@@ -282,6 +282,42 @@ export function collectAssetRefs(timeline: Timeline): string[] {
 	return [...refs];
 }
 
+/**
+ * Returns a copy of the timeline without the `asset://` references `available`
+ * rejects (media deleted since the timeline was composed). A background falls
+ * back to the brand backdrop, an audio clip is removed, and a logo, dark logo,
+ * watermark, cutout or icon is left out. Other URLs are kept as they are.
+ */
+export function dropMissingAssetRefs(timeline: Timeline, available: (assetId: string) => boolean): Timeline {
+	const ok = (src: string) => !src.startsWith("asset://") || available(src.slice("asset://".length));
+	const icon = (value?: TimelineIcon) => (value && ok(value.src) ? value : undefined);
+	const { logo, watermark } = timeline.theme;
+	return {
+		...timeline,
+		theme: {
+			...timeline.theme,
+			logo: logo && ok(logo.src) ? { src: logo.src, darkSrc: logo.darkSrc && ok(logo.darkSrc) ? logo.darkSrc : undefined } : undefined,
+			watermark: watermark && ok(watermark.src) ? watermark : undefined,
+		},
+		scenes: timeline.scenes.map((scene) => {
+			const bg = scene.background;
+			let background: TimelineBackground = bg;
+			if ((bg.kind === "image" || bg.kind === "video" || bg.kind === "lottie") && !ok(bg.src)) background = { kind: "brand" };
+			else if (bg.kind === "image" && bg.cutout && !ok(bg.cutout.src)) background = { ...bg, cutout: undefined };
+			return {
+				...scene,
+				background,
+				content: {
+					...scene.content,
+					icon: icon(scene.content.icon),
+					bullets: scene.content.bullets?.map((bullet) => ({ ...bullet, icon: icon(bullet.icon) })),
+				},
+			};
+		}),
+		audio: timeline.audio.filter((clip) => ok(clip.src)),
+	};
+}
+
 /** Returns a copy of the timeline with each `asset://<id>` replaced by `resolve(id)`. */
 export function resolveAssetRefs(timeline: Timeline, resolve: (assetId: string) => string): Timeline {
 	const swap = (src: string) => (src.startsWith("asset://") ? resolve(src.slice("asset://".length)) : src);
