@@ -7,6 +7,8 @@ import { badRequest, newId, notFound } from "../lib/util.ts";
 import { deletePrefix } from "../services/storage.ts";
 import { WORKFLOW_GUIDE, projectBrief } from "../services/brief.ts";
 import { brandCompleteness, getProject, listProjects, projectSummary } from "../services/projects.ts";
+import { describeControls } from "../../../shared/controls.ts";
+import { getControls } from "../services/controls.ts";
 import { budgetStatus } from "../services/usage.ts";
 import { defineOp } from "./registry.ts";
 
@@ -16,7 +18,7 @@ export const projectOps = [
 	defineOp({
 		name: "whoami",
 		title: "Who am I",
-		description: "The signed-in account, its role, and how much of this month's generation budget is left.",
+		description: "The signed-in account, its role, how much of this month's generation budget is left, and what its cost controls switch off or limit.",
 		input: z.object({}),
 		readOnly: true,
 		handler: async (_input, { actor }) => ({
@@ -25,6 +27,7 @@ export const projectOps = [
 			name: actor.name,
 			role: actor.isAdmin ? "admin" : "user",
 			budget: await budgetStatus(actor),
+			costControls: describeControls(await getControls(actor.id)),
 		}),
 	}),
 
@@ -120,7 +123,12 @@ export const projectOps = [
 			"The production brief for a project: standing instructions, brand identity, audience, writing voice, narration voice, visual style, motion, format, cast, pinned notes and reusable assets, as one document. Read it before writing or changing a video in the project.",
 		input: z.object({ projectId }),
 		readOnly: true,
-		handler: async (input, { actor }) => ({ brief: await projectBrief(await getProject(actor, input.projectId)) }),
+		handler: async (input, { actor }) => {
+			const [brief, controls] = await Promise.all([projectBrief(await getProject(actor, input.projectId)), getControls(actor.id)]);
+			const limits = describeControls(controls);
+			// The account's cost controls decide what a storyboard can sensibly ask for, so they travel with the brief.
+			return { brief: limits.length ? `${brief.trimEnd()}\n\n## Cost controls (this account)\n\n${limits.map((line) => `- ${line}`).join("\n")}\n` : brief };
+		},
 	}),
 
 	defineOp({

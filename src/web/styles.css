@@ -413,6 +413,47 @@ input.code {
 	flex-wrap: wrap;
 	justify-content: flex-end;
 }
+.row.control input[type="checkbox"] {
+	width: 18px;
+	height: 18px;
+	flex: none;
+	padding: 0;
+	margin: 0;
+	accent-color: var(--signal);
+	box-shadow: none;
+}
+.row.control .spacer {
+	width: 18px;
+	flex: none;
+}
+.row.control label {
+	cursor: pointer;
+}
+.row.control .title {
+	white-space: normal;
+}
+.row select.compact,
+.row input.compact {
+	width: auto;
+	min-width: 0;
+	max-width: 46%;
+	flex: none;
+}
+.row input.compact {
+	width: 110px;
+}
+@media (max-width: 860px) {
+	.row.control {
+		flex-wrap: wrap;
+	}
+	.row.control .grow {
+		flex-basis: calc(100% - 34px);
+	}
+	.row select.compact {
+		margin-left: 34px;
+		max-width: calc(100% - 34px);
+	}
+}
 .empty {
 	padding: 26px 0;
 	color: var(--ink-3);

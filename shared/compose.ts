@@ -45,6 +45,8 @@ export interface ResolvedRefs {
 	icons?: Record<string, Ref>;
 	/** scene id → the scene picture's subject, cut out */
 	cutout?: Record<string, Ref>;
+	/** `visual:<scene id>` or `sfx:<scene id>:<index>` → why it was left out (switched off in the account's cost controls). */
+	withheld?: Record<string, string>;
 }
 
 export interface ComposeInput {
@@ -365,7 +367,7 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 			const assetId = effect.assetId ?? resolved.sfx[`${scene.id}:${i}`]?.assetId;
 			const asset = ready(assetId, ["audio"]);
 			if (!asset) {
-				warnings.push(`${label}: sound effect ${i + 1} is not available and was left out`);
+				if (!resolved.withheld?.[`sfx:${scene.id}:${i}`]) warnings.push(`${label}: sound effect ${i + 1} is not available and was left out`);
 				return;
 			}
 			const length = Math.max(1, frames(asset.durationSec ?? 2));
@@ -437,6 +439,8 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 						? `${label}: asset ${assetId} is ${exists.ready ? `a ${exists.kind}, not an image, video or animation` : "not ready"}`
 						: `${label}: asset ${assetId} does not exist in this project`,
 				);
+			} else if (resolved.withheld?.[`visual:${scene.id}`]) {
+				// Left out on purpose (cost controls); preparing already said so.
 			} else {
 				missing(`${label}: its ${visual.source === "stock" ? "stock media" : visual.source === "vector" ? "vector illustration" : visual.source} has not been generated yet`);
 			}

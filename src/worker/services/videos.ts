@@ -12,6 +12,7 @@ import { db, schema } from "../db/client.ts";
 import type { GenerationSpec, ResolvedMedia } from "../db/schema.ts";
 import { clamp, hashOf, notFound } from "../lib/util.ts";
 import { falConfigured } from "../providers/fal.ts";
+import { blockedReason, getControls, limitSpec } from "./controls.ts";
 import { iconLicense, iconSets, iconSvgUrl, missingIcons } from "../providers/iconify.ts";
 import { type Orientation, searchStock } from "../providers/stock.ts";
 import { type Asset, assetsById, createAsset, deleteAsset } from "./assets.ts";
@@ -198,26 +199,39 @@ export async function planMedia(
 	const dryRun = options.dryRun ?? false;
 	const { video, project } = await loadVideo(videoId);
 	const brand = project.brand;
+	const controls = await getControls(userId);
 	const resolved: ResolvedMedia = structuredClone(video.resolved);
 	resolved.icons ??= {};
 	resolved.cutout ??= {};
+	resolved.withheld ??= {};
 	const existing = await assetsById(project.id, referencedAssetIds(video.storyboard, resolved, brand));
 	const plan: MediaPlan = { todo: [], created: [], pending: [], problems: [] };
 	const superseded: string[] = [];
 	const inScope = (sceneId: string) => !regenerate.sceneIds?.length || regenerate.sceneIds.includes(sceneId);
 
-	/** Reuses the current entry when its inputs are unchanged, otherwise creates a pending asset. */
+	/**
+	 * Reuses the current entry when its inputs are unchanged, otherwise creates a pending asset.
+	 * `blocked` (the account's cost controls switched this kind of media off) still allows reuse of
+	 * media already paid for, but creates nothing: it returns undefined and the caller falls back.
+	 * Hashes are taken from what the storyboard asks for, before cost limits are applied, so
+	 * changing a limit never regenerates anything.
+	 */
 	const ensure = async (
 		current: { assetId: string; hash: string } | undefined,
 		hash: string,
 		force: boolean,
 		item: PlannedItem,
 		create: () => Promise<Asset | null>,
+		blocked?: string,
 	): Promise<{ assetId: string; hash: string } | undefined> => {
 		const asset = current ? existing.get(current.assetId) : undefined;
 		if (!force && current?.hash === hash && asset && asset.status !== "failed") {
 			if (asset.status === "pending") plan.pending.push(asset.id);
 			return current;
+		}
+		if (blocked) {
+			if (current && asset?.tags.includes("auto")) superseded.push(asset.id);
+			return undefined;
 		}
 		plan.todo.push(item);
 		if (dryRun) return current;
@@ -231,6 +245,12 @@ export async function planMedia(
 	};
 	const base = { projectId: project.id, createdBy: userId, source: "generated" as const };
 	const sceneName = (scene: Scene) => scene.label ?? scene.id;
+	const limited = <T extends GenerationSpec>(spec: T) => limitSpec(controls, spec);
+	const withhold = (scene: Scene, reason: string) => {
+		delete resolved.visual[scene.id];
+		resolved.withheld![`visual:${scene.id}`] = reason;
+		plan.problems.push(`Scene "${scene.id}": ${reason}, so the brand backdrop is shown instead.`);
+	};
 
 	// Icons: one file per icon, shared by every scene that uses it.
 	if (phase === 1) {
@@ -308,7 +328,7 @@ export async function planMedia(
 						name: `Narration · ${video.title} · ${sceneName(scene)}`,
 						tags: ["auto", "narration"],
 						meta: { prompt: scene.narration },
-						generation: spec,
+						generation: limited(spec),
 					}),
 				);
 				if (entry) resolved.narration[scene.id] = entry;
@@ -317,19 +337,34 @@ export async function planMedia(
 			}
 
 			// Sound effects described by a prompt
+			for (const key of Object.keys(resolved.withheld!)) if (key.startsWith(`sfx:${scene.id}:`)) delete resolved.withheld![key];
 			for (const [index, effect] of (scene.sfx ?? []).entries()) {
 				if (effect.assetId || !effect.prompt) continue;
 				const key = `${scene.id}:${index}`;
 				const spec: GenerationSpec = { type: "sfx", prompt: effect.prompt };
-				const entry = await ensure(resolved.sfx[key], await hashOf(spec), false, { kind: "sfx", sceneId: scene.id }, () =>
-					createAsset({ ...base, kind: "audio", name: `SFX · ${effect.prompt}`, tags: ["auto", "sfx"], meta: { prompt: effect.prompt }, generation: spec }),
+				const blocked = blockedReason(controls, "sfx");
+				const entry = await ensure(
+					resolved.sfx[key],
+					await hashOf(spec),
+					false,
+					{ kind: "sfx", sceneId: scene.id },
+					() => createAsset({ ...base, kind: "audio", name: `SFX · ${effect.prompt}`, tags: ["auto", "sfx"], meta: { prompt: effect.prompt }, generation: spec }),
+					blocked,
 				);
 				if (entry) resolved.sfx[key] = entry;
+				else if (blocked) {
+					delete resolved.sfx[key];
+					resolved.withheld![`sfx:${key}`] = blocked;
+					plan.problems.push(`Scene "${scene.id}": sound effect "${effect.prompt}" is left out: ${blocked}.`);
+				}
+				if (entry) delete resolved.withheld![`sfx:${key}`];
 			}
 		}
 
 		const visual = scene.visual;
 		const forceVisual = Boolean(regenerate.visuals && inScope(scene.id));
+		// Re-decided below for whichever phase produces this scene's visual (clips: phase 2, the rest: phase 1).
+		if (phase === 1 && visual?.source !== "video") delete resolved.withheld![`visual:${scene.id}`];
 
 		// Subject cut-out, made once the scene's picture exists.
 		if (phase === 1 && !visual?.cutout) delete resolved.cutout![scene.id];
@@ -344,17 +379,28 @@ export async function planMedia(
 				plan.todo.push({ kind: "cutout", sceneId: scene.id });
 			} else if (picture?.status === "ready") {
 				const spec: GenerationSpec = { type: "cutout", sourceAssetId: picture.id };
-				const entry = await ensure(resolved.cutout![scene.id], await hashOf(spec), forceVisual, { kind: "cutout", sceneId: scene.id }, () =>
-					createAsset({
-						...base,
-						kind: "image",
-						name: `Cut-out · ${video.title} · ${sceneName(scene)}`,
-						tags: ["auto", "scene", "cutout"],
-						meta: { prompt: picture.meta.prompt },
-						generation: spec,
-					}),
+				const blocked = blockedReason(controls, "cutout");
+				const entry = await ensure(
+					resolved.cutout![scene.id],
+					await hashOf(spec),
+					forceVisual,
+					{ kind: "cutout", sceneId: scene.id },
+					() =>
+						createAsset({
+							...base,
+							kind: "image",
+							name: `Cut-out · ${video.title} · ${sceneName(scene)}`,
+							tags: ["auto", "scene", "cutout"],
+							meta: { prompt: picture.meta.prompt },
+							generation: spec,
+						}),
+					blocked,
 				);
 				if (entry) resolved.cutout![scene.id] = entry;
+				else if (blocked) {
+					delete resolved.cutout![scene.id];
+					plan.problems.push(`Scene "${scene.id}": ${blocked}, so the whole picture is shown.`);
+				}
 			}
 		}
 
@@ -376,17 +422,26 @@ export async function planMedia(
 					background: palette.background,
 					pro: brand.visual?.imageStyle?.quality === "max",
 				};
-				const entry = await ensure(resolved.visual[scene.id], await hashOf(spec), forceVisual, { kind: "vector", sceneId: scene.id }, () =>
-					createAsset({
-						...base,
-						kind: "image",
-						name: `Vector · ${video.title} · ${sceneName(scene)}`,
-						tags: ["auto", "scene", "vector"],
-						meta: { prompt: visual.prompt },
-						generation: spec,
-					}),
+				const blocked = blockedReason(controls, "vector");
+				delete resolved.withheld![`visual:${scene.id}`];
+				const entry = await ensure(
+					resolved.visual[scene.id],
+					await hashOf(spec),
+					forceVisual,
+					{ kind: "vector", sceneId: scene.id },
+					() =>
+						createAsset({
+							...base,
+							kind: "image",
+							name: `Vector · ${video.title} · ${sceneName(scene)}`,
+							tags: ["auto", "scene", "vector"],
+							meta: { prompt: visual.prompt },
+							generation: limited(spec),
+						}),
+					blocked,
 				);
 				if (entry) resolved.visual[scene.id] = entry;
+				else if (blocked) withhold(scene, blocked);
 			}
 		}
 
@@ -398,17 +453,26 @@ export async function planMedia(
 				quality: brand.visual?.imageStyle?.quality ?? "max",
 				referenceAssetIds: imageReferenceIds(brand, visual.cast, visual.referenceAssetIds),
 			};
-			const entry = await ensure(resolved.visual[scene.id], await hashOf(spec), forceVisual, { kind: "image", sceneId: scene.id }, () =>
-				createAsset({
-					...base,
-					kind: "image",
-					name: `Image · ${video.title} · ${sceneName(scene)}`,
-					tags: ["auto", "scene"],
-					meta: { prompt: visual.prompt },
-					generation: spec,
-				}),
+			const blocked = blockedReason(controls, "image");
+			delete resolved.withheld![`visual:${scene.id}`];
+			const entry = await ensure(
+				resolved.visual[scene.id],
+				await hashOf(spec),
+				forceVisual,
+				{ kind: "image", sceneId: scene.id },
+				() =>
+					createAsset({
+						...base,
+						kind: "image",
+						name: `Image · ${video.title} · ${sceneName(scene)}`,
+						tags: ["auto", "scene"],
+						meta: { prompt: visual.prompt },
+						generation: limited(spec),
+					}),
+				blocked,
 			);
 			if (entry) resolved.visual[scene.id] = entry;
+			else if (blocked) withhold(scene, blocked);
 		}
 
 		if (visual.source === "stock" && phase === 1) {
@@ -457,17 +521,59 @@ export async function planMedia(
 			// Length follows the narration, so it is left out of the key: a reworded line does not buy a new clip.
 			const { seconds: _derived, ...keyed } = spec;
 			const hash = await hashOf(visual.seconds ? spec : keyed);
-			const entry = await ensure(resolved.visual[scene.id], hash, forceVisual, { kind: "clip", sceneId: scene.id, units: seconds }, () =>
-				createAsset({
-					...base,
-					kind: "video",
-					name: `Clip · ${video.title} · ${sceneName(scene)}`,
-					tags: ["auto", "scene"],
-					meta: { prompt: visual.prompt },
-					generation: spec,
-				}),
+			const blocked = blockedReason(controls, "video");
+			delete resolved.withheld![`visual:${scene.id}`];
+			const allowed = limited(spec);
+			const entry = await ensure(
+				resolved.visual[scene.id],
+				hash,
+				forceVisual,
+				{ kind: "clip", sceneId: scene.id, units: allowed.seconds },
+				() =>
+					createAsset({
+						...base,
+						kind: "video",
+						name: `Clip · ${video.title} · ${sceneName(scene)}`,
+						tags: ["auto", "scene"],
+						meta: { prompt: visual.prompt },
+						generation: allowed,
+					}),
+				blocked,
 			);
 			if (entry) resolved.visual[scene.id] = entry;
+			else if (blocked) {
+				// A cheaper stand-in: the clip's own first frame, else a generated still of the same shot.
+				const firstFrame = visual.firstFrameAssetId
+					? (existing.get(visual.firstFrameAssetId) ?? (await assetsById(project.id, [visual.firstFrameAssetId])).get(visual.firstFrameAssetId))
+					: undefined;
+				const stillBlocked = blockedReason(controls, "image");
+				if (firstFrame?.status === "ready" && firstFrame.kind === "image") {
+					resolved.visual[scene.id] = { assetId: firstFrame.id, hash: await hashOf({ firstFrame: firstFrame.id }) };
+					plan.problems.push(`Scene "${scene.id}": ${blocked}, so its first-frame image is shown as a still.`);
+				} else if (!stillBlocked) {
+					const still: GenerationSpec = {
+						type: "image",
+						prompt: styledImagePrompt(brand, visual.prompt!, visual.cast),
+						aspectRatio: video.aspect,
+						quality: brand.visual?.imageStyle?.quality ?? "max",
+						referenceAssetIds: imageReferenceIds(brand, visual.cast),
+					};
+					const stand = await ensure(resolved.visual[scene.id], await hashOf(still), forceVisual, { kind: "image", sceneId: scene.id }, () =>
+						createAsset({
+							...base,
+							kind: "image",
+							name: `Image · ${video.title} · ${sceneName(scene)}`,
+							tags: ["auto", "scene"],
+							meta: { prompt: visual.prompt },
+							generation: limited(still),
+						}),
+					);
+					if (stand) resolved.visual[scene.id] = stand;
+					plan.problems.push(`Scene "${scene.id}": ${blocked}, so a still image of the shot is used instead.`);
+				} else {
+					withhold(scene, blocked);
+				}
+			}
 		} else if (visual.source === "video" && phase === 1) {
 			const current = existing.get(resolved.visual[scene.id]?.assetId ?? "");
 			if (current?.status === "pending") plan.pending.push(current.id);
@@ -482,6 +588,7 @@ export async function planMedia(
 		}
 		for (const key of Object.keys(resolved.sfx)) if (!sceneIds.has(key.split(":")[0]!)) delete resolved.sfx[key];
 		for (const key of Object.keys(resolved.cutout!)) if (!sceneIds.has(key)) delete resolved.cutout![key];
+		for (const key of Object.keys(resolved.withheld!)) if (!sceneIds.has(key.split(":")[1]!)) delete resolved.withheld![key];
 	}
 
 	// Music bed, sized to the finished video.
@@ -502,10 +609,20 @@ export async function planMedia(
 			const spec: GenerationSpec = { type: "music", prompt, seconds, instrumental: true };
 			// Re-score only when the length changes by a meaningful amount.
 			const hash = await hashOf({ prompt, bucket: Math.ceil(seconds / 20) });
-			const entry = await ensure(resolved.music, hash, Boolean(regenerate.music), { kind: "music", units: seconds }, () =>
-				createAsset({ ...base, kind: "audio", name: `Music · ${video.title}`, tags: ["auto", "music"], meta: { prompt }, generation: spec }),
+			const blocked = blockedReason(controls, "music");
+			const entry = await ensure(
+				resolved.music,
+				hash,
+				Boolean(regenerate.music),
+				{ kind: "music", units: seconds },
+				() => createAsset({ ...base, kind: "audio", name: `Music · ${video.title}`, tags: ["auto", "music"], meta: { prompt }, generation: spec }),
+				blocked,
 			);
 			if (entry) resolved.music = entry;
+			else if (blocked) {
+				delete resolved.music;
+				plan.problems.push(`Music is left out: ${blocked}.`);
+			}
 		}
 	}
 

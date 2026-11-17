@@ -84,3 +84,29 @@ Quota: uploads have their own allowance of 100 a day per Cloud project. Captions
 ## Access
 
 Anyone can sign in with Google, but a new account can do nothing until an administrator approves it. Emails in `SUPERUSER_EMAILS` (`cloudflare.config.ts`) become administrators on first sign-in. Each account has a monthly generation budget (default $25, `DEFAULT_MONTHLY_BUDGET_CENTS`) that administrators can change per person.
+
+## Costs per account
+
+Every vendor charge is written to the usage ledger (`usage_events`) against the account that caused it, as soon as the vendor answers. `admin.costs` turns the ledger into a statement per account for any period, by provider, kind and model, and applies a markup (`markup: 1.3` → cost × 1.3). The monthly budget is checked against the same ledger.
+
+| Vendor | What is charged | How the cost is known (`basis`) |
+| --- | --- | --- |
+| OpenRouter | images, video clips | `vendor`: `usage.cost` from the response (`list` if it is missing) |
+| ElevenLabs | narration | `metered`: the `character-cost` header × our rate per 1k characters |
+| ElevenLabs | music, sound effects | `metered` / `list`: length × published per-minute price |
+| fal | cut-outs, vector art | `metered`: `x-fal-billable-units` × the endpoint's price from fal's pricing API (`list` as a fallback) |
+| Cloudflare Containers | renders, preview frames | `metered`: container run time from start to stop (measured in `Renderer`), including the idle time before it sleeps |
+| Cloudflare R2 | stored assets and renders | `metered`: a nightly cron charges each account one day of storage |
+
+Rates that are not reported per request live in `src/worker/services/pricing.ts`; keep them in line with the invoices.
+
+**Reconciliation.** Each night, after accruing storage, two optional jobs replace metered costs from the past week with what the vendor billed (`basis` becomes `vendor`). `admin.reconcile` runs them on demand, e.g. before producing statements for a month that just closed.
+
+- fal: set the `FAL_BILLING_KEY` secret to a fal key with the BILLING (or FULL) preset. Each request's charge is read from fal's billing-events API by its request id.
+- Containers: set `CLOUDFLARE_ANALYTICS_TOKEN` to an API token with Account Analytics: Read. Containers are labelled with their instance name, so a run's CPU, memory and disk usage is read from the `containersUsageAdaptiveGroups` dataset over the run's window. This also replaces the full-CPU assumption with the CPU actually used.
+
+## Cost controls
+
+Each account can choose what Retween spends its money on (Account → Cost controls, or `account.controls` / `account.controls_update`; administrators can pass a `userId`). It can switch off generated clips, images, vector illustrations, cut-outs, music and sound effects. It can also cap clip resolution and length, image quality and export resolution, pick a cheaper narration model (Flash and Turbo cost half as much), and set its own monthly limit below the allowance.
+
+Controls govern new spending only. Media that was already generated keeps being used, and changing a control never regenerates anything. Media hashes are taken before the limits are applied. When a storyboard asks for something that is switched off, `video.prepare` still succeeds with a cheaper stand-in and reports it. A clip becomes its first-frame image, else a generated still, else the brand backdrop. A still or vector becomes the brand backdrop, and music, sound effects and cut-outs are left out. Asking for one directly (`asset.generate_video` etc.) is refused with `disabled_by_controls`. `video.estimate`, `project.brief` and `whoami` all reflect the controls, so agents can plan within them. Vendor request ids are kept in `vendor_ref` for reconciliation. Free services (stock libraries, Iconify, OpenStreetMap, YouTube) cost nothing and are not recorded; Workers, D1 and Workflows requests are shared overhead.

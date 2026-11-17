@@ -1,5 +1,6 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { BrandKit } from "../../../shared/brand.ts";
+import type { CostControls } from "../../../shared/controls.ts";
 import type { Storyboard } from "../../../shared/storyboard.ts";
 import type { AspectRatio, Resolution, Timeline } from "../../../shared/timeline.ts";
 import { user } from "./auth-schema.ts";
@@ -170,6 +171,11 @@ export interface ResolvedMedia {
 	icons?: Record<string, { assetId: string; hash: string }>;
 	/** scene id → the scene picture's subject, cut out */
 	cutout?: Record<string, { assetId: string; hash: string }>;
+	/**
+	 * Media left out on purpose because the account's cost controls switched it
+	 * off: `visual:<scene id>` or `sfx:<scene id>:<index>` → reason. Compose falls back instead of failing.
+	 */
+	withheld?: Record<string, string>;
 }
 
 export const videos = sqliteTable(
@@ -232,7 +238,16 @@ export const renders = sqliteTable(
 	(t) => [index("renders_video_idx").on(t.videoId), index("renders_project_idx").on(t.projectId)],
 );
 
-export type UsageKind = "image" | "video" | "speech" | "music" | "sfx" | "render";
+export type UsageKind = "image" | "video" | "speech" | "music" | "sfx" | "render" | "preview" | "storage";
+
+/**
+ * How a usage event's cost was arrived at, from most to least exact:
+ * - `vendor`: the vendor reported the charge for this request (OpenRouter `usage.cost`, fal's per-request billing).
+ * - `metered`: billable units the vendor reported or we measured (ElevenLabs credits, container seconds,
+ *   stored bytes) multiplied by our contracted rate in `services/pricing.ts`.
+ * - `list`: a published list price for the request, used when neither is available.
+ */
+export type CostBasis = "vendor" | "metered" | "list";
 
 export const usageEvents = sqliteTable(
 	"usage_events",
@@ -250,11 +265,24 @@ export const usageEvents = sqliteTable(
 		/** Cost in millionths of a US dollar. Provider-reported where possible, otherwise estimated. */
 		costMicros: integer("cost_micros").notNull().default(0),
 		estimated: integer("estimated", { mode: "boolean" }).notNull().default(false),
+		basis: text("basis").$type<CostBasis>().notNull().default("list"),
+		/** Our id for what was produced: an asset, render or container run. */
 		ref: text("ref"),
+		/** The vendor's id for the request (OpenRouter generation, ElevenLabs request, fal request), for reconciling against invoices. */
+		vendorRef: text("vendor_ref"),
 		createdAt: createdAt(),
 	},
-	(t) => [index("usage_user_idx").on(t.userId, t.createdAt)],
+	(t) => [index("usage_user_idx").on(t.userId, t.createdAt), index("usage_created_idx").on(t.createdAt)],
 );
+
+/** An account's cost controls (see shared/controls.ts). Only the fields the person changed are stored. */
+export const accountControls = sqliteTable("account_controls", {
+	userId: text("user_id")
+		.primaryKey()
+		.references(() => user.id, { onDelete: "cascade" }),
+	controls: text("controls", { mode: "json" }).$type<Partial<CostControls>>().notNull().default({}),
+	updatedAt: updatedAt(),
+});
 
 /**
  * A YouTube channel a person has allowed Retween to publish to. Tokens are

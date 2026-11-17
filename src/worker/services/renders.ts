@@ -24,9 +24,6 @@ import { type Video, composeAndSave, compositionHash, runCompose } from "./video
 
 export type Render = typeof schema.renders.$inferSelect;
 
-/** What a second of render time costs on the container, for budget tracking (4 vCPU, 12 GiB). */
-export const RENDER_USD_PER_SECOND = 4 * 0.00002 + 12 * 0.0000025;
-
 export async function getRender(actor: Actor, renderId: string): Promise<{ render: Render; project: Project }> {
 	const render = await db.query.renders.findFirst({ where: eq(schema.renders.id, renderId) });
 	if (!render) throw notFound("Render");

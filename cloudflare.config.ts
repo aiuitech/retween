@@ -1,4 +1,4 @@
-import { bindings, defineConfig, defineContainer, exports } from "cf/config";
+import { bindings, defineConfig, defineContainer, exports, triggers } from "cf/config";
 import * as entrypoint from "./src/worker/index.ts" with { type: "cf-worker" };
 
 const WORKER = "retween";
@@ -11,10 +11,12 @@ const renderer = defineContainer({
 	maxInstances: 8,
 });
 
+const ACCOUNT_ID = "797ac9a450f9bde8b6f44e405394b59b";
+
 export default defineConfig(({ mode }) => {
 	const dev = mode === "development";
 	return {
-		accountId: "797ac9a450f9bde8b6f44e405394b59b",
+		accountId: ACCOUNT_ID,
 		worker: {
 			name: WORKER,
 			entrypoint,
@@ -29,12 +31,16 @@ export default defineConfig(({ mode }) => {
 			},
 			observability: { enabled: true },
 			limits: { cpuMs: 300_000 },
+			// Nightly: charge each account a day of storage (services/metering.ts).
+			triggers: [triggers.scheduled({ schedule: "10 0 * * *" })],
 			env: {
 				APP_URL: bindings.text(dev ? "http://localhost:5173" : "https://retween.app"),
 				/** Comma-separated. These accounts become admins the first time they sign in. */
 				SUPERUSER_EMAILS: bindings.text("greg@aiui.tech"),
 				/** Monthly generation budget given to new users, in US cents. */
 				DEFAULT_MONTHLY_BUDGET_CENTS: bindings.text("2500"),
+				/** Used to read container usage from Cloudflare's analytics when reconciling costs. */
+				CLOUDFLARE_ACCOUNT_ID: bindings.text(ACCOUNT_ID),
 				/** Sent with requests to stock-media APIs. */
 				OUTBOUND_USER_AGENT: bindings.text("video-service/1.0"),
 

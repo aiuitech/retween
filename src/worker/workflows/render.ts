@@ -8,9 +8,8 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client.ts";
 import type { RenderStatus } from "../db/schema.ts";
 import { rendererFetch, stopRenderer } from "../renderer.ts";
-import { RENDER_USD_PER_SECOND, renderProps } from "../services/renders.ts";
+import { renderProps } from "../services/renders.ts";
 import { renderKey } from "../services/storage.ts";
-import { recordUsage } from "../services/usage.ts";
 
 const PART_BYTES = 16 * 1024 * 1024;
 const network = { retries: { limit: 4, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" } as const;
@@ -113,8 +112,8 @@ export class RenderWorkflow extends WorkflowEntrypoint<Env, { renderId: string }
 				);
 			}
 
+			// The container's cost is metered from its own start and stop (see Renderer), not here.
 			await step.do("finish", async () => {
-				const render = (await loadRender(renderId))!;
 				await env.MEDIA.resumeMultipartUpload(upload.key, upload.uploadId).complete(parts);
 				const finishedAt = new Date();
 				await update(renderId, {
@@ -125,18 +124,6 @@ export class RenderWorkflow extends WorkflowEntrypoint<Env, { renderId: string }
 					durationMs: Math.round((output!.durationInFrames / output!.fps) * 1000),
 					warnings,
 					finishedAt,
-				});
-				const seconds = render.startedAt ? (finishedAt.getTime() - render.startedAt.getTime()) / 1000 : 0;
-				await recordUsage({
-					userId: render.createdBy,
-					projectId: render.projectId,
-					ref: renderId,
-					kind: "render",
-					provider: "cloudflare",
-					quantity: seconds,
-					unit: "seconds",
-					costUsd: seconds * RENDER_USD_PER_SECOND,
-					estimated: true,
 				});
 			});
 		} catch (error) {

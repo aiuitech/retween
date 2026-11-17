@@ -7,16 +7,25 @@ import { AppError, base64ToBytes, upstreamError } from "../lib/util.ts";
 const BASE = "https://api.elevenlabs.io";
 const OUTPUT_FORMAT = "mp3_44100_128";
 
-/** Rough list prices, used only to keep a running estimate against a user's budget. */
-export const ESTIMATED_USD = {
-	perSpeechCharacter: 0.00018,
-	perMusicSecond: 0.0085,
-	perSfxSecond: 0.0035,
-};
-
 const headers = () => ({ "xi-api-key": env.ELEVENLABS_API_KEY, "content-type": "application/json" });
 
-export interface SpeechResult {
+/** What ElevenLabs says about a request's billing, from its response headers. */
+export interface Billing {
+	/** `request-id` (speech, sound effects) or `song-id` (music). */
+	requestId?: string;
+	/** `character-cost`: characters billed, where reported. */
+	billedCharacters?: number;
+}
+
+function billingOf(response: Response): Billing {
+	const cost = Number(response.headers.get("character-cost"));
+	return {
+		requestId: response.headers.get("request-id") ?? response.headers.get("song-id") ?? undefined,
+		billedCharacters: Number.isFinite(cost) && response.headers.has("character-cost") ? cost : undefined,
+	};
+}
+
+export interface SpeechResult extends Billing {
 	audio: Uint8Array;
 	/** One entry per character of the text that was sent. */
 	characters: string[];
@@ -66,6 +75,7 @@ export async function synthesizeSpeech(input: {
 	const alignment = json.alignment;
 	const ends = alignment?.character_end_times_seconds ?? [];
 	return {
+		...billingOf(response),
 		audio: base64ToBytes(json.audio_base64),
 		characters: alignment?.characters ?? [],
 		starts: alignment?.character_start_times_seconds ?? [],
@@ -74,13 +84,13 @@ export async function synthesizeSpeech(input: {
 	};
 }
 
-async function audioOrThrow(provider: string, response: Response): Promise<Uint8Array> {
+async function audioOrThrow(provider: string, response: Response): Promise<{ audio: Uint8Array } & Billing> {
 	if (!response.ok) throw await upstreamError(provider, response);
-	return new Uint8Array(await response.arrayBuffer());
+	return { audio: new Uint8Array(await response.arrayBuffer()), ...billingOf(response) };
 }
 
 /** A music bed, 10 s to 5 min. */
-export async function composeMusic(input: { prompt: string; seconds: number; instrumental: boolean }): Promise<Uint8Array> {
+export async function composeMusic(input: { prompt: string; seconds: number; instrumental: boolean }) {
 	const response = await fetch(`${BASE}/v1/music?output_format=${OUTPUT_FORMAT}`, {
 		method: "POST",
 		headers: headers(),
@@ -94,7 +104,7 @@ export async function composeMusic(input: { prompt: string; seconds: number; ins
 }
 
 /** A sound effect, 0.5–30 s. Omit `seconds` to let the model decide. */
-export async function generateSfx(input: { prompt: string; seconds?: number }): Promise<Uint8Array> {
+export async function generateSfx(input: { prompt: string; seconds?: number }) {
 	const response = await fetch(`${BASE}/v1/sound-generation?output_format=${OUTPUT_FORMAT}`, {
 		method: "POST",
 		headers: headers(),

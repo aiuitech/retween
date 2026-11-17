@@ -1,8 +1,9 @@
-import { and, count, desc, eq, gte, like, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, like, lt, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { superuserEmails } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
 import { badRequest, notFound, startOfMonthUtc } from "../lib/util.ts";
+import { reconcileContainers, reconcileFal } from "../services/reconcile.ts";
 import { deletePrefix } from "../services/storage.ts";
 import { defineOp } from "./registry.ts";
 
@@ -173,6 +174,102 @@ export const adminOps = [
 	}),
 
 	defineOp({
+		name: "admin.costs",
+		title: "Cost statement",
+		description:
+			"What each account cost to serve over a period, from the usage ledger: every vendor charge (OpenRouter, ElevenLabs, fal, " +
+			"Cloudflare containers and storage) attributed to the person who caused it, broken down by provider, kind and model. " +
+			"Pass a markup to get the amount to bill (cost × markup). `basis` says how exact each cost is: vendor (reported by the vendor), " +
+			"metered (vendor-reported or measured units × our rate), list (published list price).",
+		admin: true,
+		readOnly: true,
+		input: z.object({
+			userId: z.string().optional().describe("One account; omit for every account with charges in the period"),
+			from: z.iso.date().optional().describe("First day, inclusive (UTC). Default: the first of this month"),
+			to: z.iso.date().optional().describe("Last day, inclusive (UTC). Default: today"),
+			markup: z.number().min(0).max(100).default(1).describe("Multiplier applied to cost, e.g. 1.3 for 30% on top"),
+		}),
+		handler: async (input) => {
+			const from = input.from ? new Date(`${input.from}T00:00:00Z`) : startOfMonthUtc();
+			const to = input.to ? new Date(Date.parse(`${input.to}T00:00:00Z`) + 86_400_000) : new Date();
+			if (!(to > from)) throw badRequest("`to` must be on or after `from`");
+			const usage = schema.usageEvents;
+			const rows = await db
+				.select({
+					userId: usage.userId,
+					email: schema.user.email,
+					name: schema.user.name,
+					provider: usage.provider,
+					kind: usage.kind,
+					model: usage.model,
+					unit: usage.unit,
+					basis: usage.basis,
+					quantity: sql<number>`sum(${usage.quantity})`,
+					micros: sql<number>`sum(${usage.costMicros})`,
+					events: count(),
+				})
+				.from(usage)
+				.innerJoin(schema.user, eq(schema.user.id, usage.userId))
+				.where(and(gte(usage.createdAt, from), lt(usage.createdAt, to), input.userId ? eq(usage.userId, input.userId) : undefined))
+				.groupBy(usage.userId, usage.provider, usage.kind, usage.model, usage.unit, usage.basis);
+
+			const precise = (micros: number) => Math.round(micros) / 1_000_000;
+			const cents = (micros: number) => Math.round(micros / 10_000) / 100;
+			const accounts = new Map<
+				string,
+				{ userId: string; email: string; name: string; micros: number; byBasis: Record<string, number>; lines: unknown[] }
+			>();
+			for (const row of rows) {
+				const account = accounts.get(row.userId) ?? { userId: row.userId, email: row.email, name: row.name, micros: 0, byBasis: {}, lines: [] };
+				accounts.set(row.userId, account);
+				account.micros += row.micros;
+				account.byBasis[row.basis] = (account.byBasis[row.basis] ?? 0) + row.micros;
+				account.lines.push({
+					provider: row.provider,
+					kind: row.kind,
+					model: row.model ?? undefined,
+					basis: row.basis,
+					quantity: row.quantity,
+					unit: row.unit,
+					events: row.events,
+					costUsd: precise(row.micros),
+				});
+			}
+			const statements = [...accounts.values()]
+				.sort((a, b) => b.micros - a.micros)
+				.map(({ micros, byBasis, ...account }) => ({
+					...account,
+					costUsd: precise(micros),
+					chargeUsd: cents(micros * input.markup),
+					costByBasisUsd: Object.fromEntries(Object.entries(byBasis).map(([basis, value]) => [basis, precise(value)])),
+				}));
+			const totalMicros = [...accounts.values()].reduce((sum, account) => sum + account.micros, 0);
+			return {
+				period: { from: from.toISOString(), to: to.toISOString() },
+				markup: input.markup,
+				totalCostUsd: precise(totalMicros),
+				totalChargeUsd: statements.reduce((sum, statement) => Math.round((sum + statement.chargeUsd) * 100) / 100, 0),
+				statements,
+			};
+		},
+	}),
+
+	defineOp({
+		name: "admin.reconcile",
+		title: "Reconcile costs",
+		description:
+			"Replace metered costs from the past week with what the vendors actually billed: fal requests (needs FAL_BILLING_KEY) and " +
+			"container runs (needs CLOUDFLARE_ANALYTICS_TOKEN). Runs nightly on its own; run it by hand before producing statements for a period that just closed.",
+		admin: true,
+		input: z.object({}),
+		handler: async () => {
+			const settle = (job: () => Promise<unknown>) => job().catch((error: Error) => ({ error: error.message }));
+			const [fal, containers] = await Promise.all([settle(reconcileFal), settle(reconcileContainers)]);
+			return { fal, containers };
+		},
+	}),
+
+	defineOp({
 		name: "admin.usage",
 		title: "Usage log",
 		description: "Recent generation and render activity, optionally for one user.",
@@ -192,6 +289,9 @@ export const adminOps = [
 					unit: schema.usageEvents.unit,
 					costMicros: schema.usageEvents.costMicros,
 					estimated: schema.usageEvents.estimated,
+					basis: schema.usageEvents.basis,
+					ref: schema.usageEvents.ref,
+					vendorRef: schema.usageEvents.vendorRef,
 				})
 				.from(schema.usageEvents)
 				.innerJoin(schema.user, eq(schema.user.id, schema.usageEvents.userId))

@@ -24,7 +24,8 @@ const headers = () => ({
 export interface GeneratedImage {
 	bytes: Uint8Array;
 	contentType: string;
-	costUsd: number;
+	/** USD as reported by OpenRouter. Missing when it did not report one. */
+	costUsd?: number;
 	model: string;
 }
 
@@ -65,7 +66,7 @@ export async function generateImage(input: {
 	return {
 		bytes: base64ToBytes(image.b64_json),
 		contentType: image.media_type ?? (input.transparent ? "image/png" : "image/webp"),
-		costUsd: json.usage?.cost ?? 0,
+		costUsd: json.usage?.cost,
 		model,
 	};
 }
@@ -75,6 +76,8 @@ export interface VideoJob {
 	status: "pending" | "in_progress" | "completed" | "failed" | "cancelled" | "expired";
 	error?: string;
 	costUsd?: number;
+	/** OpenRouter's generation id, for looking the charge up later. */
+	generationId?: string;
 }
 
 export async function submitVideo(input: {
@@ -117,9 +120,11 @@ export async function getVideoJob(jobId: string): Promise<VideoJob> {
 		status: VideoJob["status"];
 		error?: string | { message?: string };
 		usage?: { cost?: number };
+		generation_id?: string;
 	};
 	return {
 		id: json.id,
+		generationId: json.generation_id,
 		status: json.status,
 		error: typeof json.error === "string" ? json.error : json.error?.message,
 		costUsd: json.usage?.cost,

@@ -15,7 +15,7 @@ export interface Me {
 	isAdmin: boolean;
 	approved: boolean;
 	banned: boolean;
-	budget: { monthlyBudgetUsd: number; spentThisMonthUsd: number; remainingUsd: number };
+	budget: { monthlyBudgetUsd: number; ownLimitUsd?: number; spentThisMonthUsd: number; remainingUsd: number };
 }
 
 export class ApiError extends Error {

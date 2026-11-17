@@ -12,6 +12,7 @@ import { STOCK_PROVIDERS, availableProviders, getStockItem, searchStock } from "
 import { type Asset, assetView, createAsset, deleteAsset, getAsset, startGeneration, waitForAssets } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
 import { signedUploadUrl } from "../services/storage.ts";
+import { enforceControls } from "../services/controls.ts";
 import { assertBudget } from "../services/usage.ts";
 import { imageReferenceIds, narrationSpec, styledImagePrompt } from "../services/videos.ts";
 import { defineOp, waitSeconds } from "./registry.ts";
@@ -214,6 +215,7 @@ export const assetOps = [
 				referenceAssetIds: imageReferenceIds(brand, input.cast, input.referenceAssetIds),
 				transparent: input.transparent,
 			};
+			const allowed = await enforceControls(actor.id, spec);
 			const asset = await createAsset({
 				projectId: project.id,
 				createdBy: actor.id,
@@ -222,7 +224,7 @@ export const assetOps = [
 				source: "generated",
 				tags: input.tags,
 				meta: { prompt: input.prompt },
-				generation: spec,
+				generation: allowed,
 			});
 			return generateAndWait(asset, input.waitSeconds);
 		},
@@ -260,7 +262,7 @@ export const assetOps = [
 				source: "generated",
 				tags: input.tags,
 				meta: { prompt: input.prompt },
-				generation: {
+				generation: await enforceControls(actor.id, {
 					type: "video",
 					prompt: style ? `${input.prompt}\n\nStyle: ${style}` : input.prompt,
 					seconds: input.seconds,
@@ -268,7 +270,7 @@ export const assetOps = [
 					resolution: input.resolution,
 					firstFrameAssetId: input.firstFrameAssetId,
 					withAudio: input.withAudio,
-				},
+				}),
 			});
 			return generateAndWait(asset, input.waitSeconds);
 		},
@@ -301,7 +303,7 @@ export const assetOps = [
 				source: "generated",
 				tags: input.tags ?? ["speech"],
 				meta: { prompt: input.text },
-				generation: narrationSpec(project.brand, input.text, { voiceId: input.voiceId, speed: input.speed }),
+				generation: await enforceControls(actor.id, narrationSpec(project.brand, input.text, { voiceId: input.voiceId, speed: input.speed })),
 			});
 			return generateAndWait(asset, input.waitSeconds);
 		},
@@ -336,7 +338,7 @@ export const assetOps = [
 				source: "generated",
 				tags: input.tags ?? ["music"],
 				meta: { prompt },
-				generation: { type: "music", prompt, seconds: input.seconds, instrumental: input.instrumental },
+				generation: await enforceControls(actor.id, { type: "music", prompt, seconds: input.seconds, instrumental: input.instrumental }),
 			});
 			return generateAndWait(asset, input.waitSeconds);
 		},
@@ -366,7 +368,7 @@ export const assetOps = [
 				source: "generated",
 				tags: input.tags ?? ["sfx"],
 				meta: { prompt: input.prompt },
-				generation: { type: "sfx", prompt: input.prompt, seconds: input.seconds },
+				generation: await enforceControls(actor.id, { type: "sfx", prompt: input.prompt, seconds: input.seconds }),
 			});
 			return generateAndWait(asset, input.waitSeconds);
 		},

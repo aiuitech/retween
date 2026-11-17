@@ -10,6 +10,7 @@ import { assetsById } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
 import { createRender, freshTimeline, getRender, previewFrame, renderView } from "../services/renders.ts";
 import { deletePrefix, signedUrl } from "../services/storage.ts";
+import { getControls, limitResolution } from "../services/controls.ts";
 import { assertBudget } from "../services/usage.ts";
 import {
 	type Video,
@@ -414,9 +415,15 @@ export const videoOps = [
 			const { video, project } = await getVideo(actor, input.videoId);
 			if (video.status === "preparing") throw new AppError(409, "This video is still being prepared. Wait for video.get to report ready.", "not_ready");
 			await assertBudget(actor);
-			const targets = input.exports ?? [
-				{ aspect: input.aspect ?? video.aspect, resolution: input.resolution ?? project.brand.format?.resolution ?? "1080p" },
-			];
+			const controls = await getControls(actor.id);
+			const notes = new Set<string>();
+			const targets = (
+				input.exports ?? [{ aspect: input.aspect ?? video.aspect, resolution: input.resolution ?? project.brand.format?.resolution ?? "1080p" }]
+			).map((target) => {
+				const limited = limitResolution(controls, target.resolution);
+				if (limited.note) notes.add(limited.note);
+				return { ...target, resolution: limited.resolution };
+			});
 			const timeline = await freshTimeline(video, project);
 			const renders = [];
 			for (const target of targets) renders.push(await createRender(actor, video, project, target, timeline));
@@ -430,7 +437,7 @@ export const videoOps = [
 			}
 			return {
 				renders: await Promise.all(current.map((render) => renderView(render, video.title))),
-				note: "Rendering continues in the background. Use render.get with waitSeconds to follow it.",
+				note: ["Rendering continues in the background. Use render.get with waitSeconds to follow it.", ...notes].join(" "),
 			};
 		},
 	}),

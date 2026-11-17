@@ -10,6 +10,8 @@ import { handleMcp } from "./routes/mcp.ts";
 import { assetView, createAsset, storeAsset } from "./services/assets.ts";
 import { getProject } from "./services/projects.ts";
 import { contentTypeFor, kindFor, serveObject, verifySignedUrl, verifyUploadUrl } from "./services/storage.ts";
+import { accrueStorage } from "./services/metering.ts";
+import { reconcileContainers, reconcileFal } from "./services/reconcile.ts";
 import { budgetStatus } from "./services/usage.ts";
 import { connectState, readConnectState, saveChannel } from "./services/youtube.ts";
 
@@ -235,4 +237,30 @@ app.get("/api/youtube/callback", async (c) => {
 
 app.all("/api/*", (c) => c.json({ ok: false, error: { code: "not_found", message: "No such endpoint" } }, 404));
 
-export default app;
+export default {
+	fetch: app.fetch,
+	/**
+	 * Nightly: charge the day that just ended for storage, then replace metered
+	 * costs with billed ones where the vendors have them. Each job runs on its own,
+	 * so one failing does not stop the others.
+	 */
+	async scheduled(controller, _env, ctx) {
+		const day = new Date(controller.scheduledTime - 24 * 60 * 60 * 1000);
+		const jobs: [string, () => Promise<unknown>][] = [
+			["storage", () => accrueStorage(day)],
+			["fal reconciliation", reconcileFal],
+			["container reconciliation", reconcileContainers],
+		];
+		ctx.waitUntil(
+			(async () => {
+				for (const [name, job] of jobs) {
+					try {
+						console.log(name, await job());
+					} catch (error) {
+						console.error(`${name} failed`, error instanceof Error ? error.message : error);
+					}
+				}
+			})(),
+		);
+	},
+} satisfies ExportedHandler<Env>;

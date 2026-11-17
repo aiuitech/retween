@@ -12,12 +12,13 @@ import type { Actor } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
 import type { AssetKind, AssetLicense, AssetMeta, AssetSource, GenerationSpec } from "../db/schema.ts";
 import { AppError, badRequest, bytesToBase64, newId, notFound } from "../lib/util.ts";
-import { ESTIMATED_USD, composeMusic, generateSfx, synthesizeSpeech } from "../providers/elevenlabs.ts";
-import { ESTIMATED_USD as FAL_USD, generateVector, removeBackground } from "../providers/fal.ts";
+import { composeMusic, generateSfx, synthesizeSpeech } from "../providers/elevenlabs.ts";
+import { type FalCharge, generateVector, removeBackground } from "../providers/fal.ts";
 import { IMAGE_MODEL, generateImage } from "../providers/openrouter.ts";
 import { MAX_LOTTIE_BYTES, lottieInfo, probeObject } from "./probe.ts";
 import { type Project, getProject } from "./projects.ts";
 import { assetKey, contentTypeFor, extensionFor, kindFor, readObject, signedUrl } from "./storage.ts";
+import { ELEVENLABS } from "./pricing.ts";
 import { recordUsage } from "./usage.ts";
 
 export type Asset = typeof schema.assets.$inferSelect;
@@ -216,7 +217,22 @@ export async function executeGeneration(assetId: string): Promise<Asset> {
 	if (asset.status === "ready") return asset;
 	const spec = asset.generation;
 	if (!spec) throw new AppError(409, "Asset has nothing to generate", "invalid_state");
+	// Each charge is recorded as soon as the vendor answers, before storing, so a retry after a storage
+	// failure (which calls the vendor again) is charged for both calls, as the vendor charges us.
 	const usage = { userId: asset.createdBy, projectId: asset.projectId, ref: asset.id };
+	const falUsage = (model: string, charge: FalCharge) =>
+		recordUsage({
+			...usage,
+			kind: "image",
+			provider: "fal",
+			model,
+			quantity: charge.billableUnits ?? 1,
+			unit: charge.unit ?? "images",
+			costUsd: charge.costUsd,
+			basis: charge.basis,
+			vendorRef: charge.requestId,
+			dedupeKey: charge.requestId && `fal:${charge.requestId}`,
+		});
 
 	switch (spec.type) {
 		case "speech": {
@@ -228,22 +244,25 @@ export async function executeGeneration(assetId: string): Promise<Asset> {
 				language: spec.language,
 				settings: spec.settings,
 			});
-			const words = wordTimings(spec.text, spoken, { characters: result.characters, starts: result.starts, ends: result.ends });
-			const stored = await storeAsset(asset, result.audio, "audio/mpeg", {
-				meta: { words, spokenText: spoken.spoken, voiceId: spec.voiceId, model: spec.modelId, provider: "elevenlabs" },
-				durationMs: Math.round(result.durationSec * 1000),
-			});
+			// Billed per character sent; ElevenLabs' own count is used when it reports one.
+			const characters = result.billedCharacters ?? spoken.spoken.length;
 			await recordUsage({
 				...usage,
 				kind: "speech",
 				provider: "elevenlabs",
 				model: spec.modelId,
-				quantity: spoken.spoken.length,
+				quantity: characters,
 				unit: "characters",
-				costUsd: spoken.spoken.length * ESTIMATED_USD.perSpeechCharacter,
-				estimated: true,
+				costUsd: (characters / 1000) * ELEVENLABS.speechUsdPer1kCharacters(spec.modelId),
+				basis: "metered",
+				vendorRef: result.requestId,
+				dedupeKey: result.requestId && `elevenlabs:${result.requestId}`,
 			});
-			return stored;
+			const words = wordTimings(spec.text, spoken, { characters: result.characters, starts: result.starts, ends: result.ends });
+			return storeAsset(asset, result.audio, "audio/mpeg", {
+				meta: { words, spokenText: spoken.spoken, voiceId: spec.voiceId, model: spec.modelId, provider: "elevenlabs" },
+				durationMs: Math.round(result.durationSec * 1000),
+			});
 		}
 		case "image": {
 			const references = await assetsById(asset.projectId, spec.referenceAssetIds);
@@ -261,50 +280,68 @@ export async function executeGeneration(assetId: string): Promise<Asset> {
 				transparent: spec.transparent,
 				model: spec.model,
 			});
-			const stored = await storeAsset(asset, image.bytes, image.contentType, { meta: { model: image.model, provider: "openrouter" } });
-			await recordUsage({ ...usage, kind: "image", provider: "openrouter", model: image.model, quantity: 1, unit: "images", costUsd: image.costUsd });
-			return stored;
+			if (image.costUsd === undefined) console.warn("OpenRouter reported no cost for an image", image.model, asset.id);
+			await recordUsage({
+				...usage,
+				kind: "image",
+				provider: "openrouter",
+				model: image.model,
+				quantity: 1,
+				unit: "images",
+				costUsd: image.costUsd ?? 0,
+				// Unpriced rows are kept as `list` so they show up as estimates and can be corrected.
+				basis: image.costUsd === undefined ? "list" : "vendor",
+			});
+			return storeAsset(asset, image.bytes, image.contentType, { meta: { model: image.model, provider: "openrouter" } });
 		}
 		case "music": {
-			const audio = await composeMusic(spec);
-			const stored = await storeAsset(asset, audio, "audio/mpeg", {
-				meta: { provider: "elevenlabs", model: "music" },
-				durationMs: Math.round(spec.seconds * 1000),
-			});
+			const music = await composeMusic(spec);
+			// The length asked for is the length billed (the API clamps it to 10 s–5 min).
+			const seconds = Math.min(300, Math.max(10, spec.seconds));
 			await recordUsage({
 				...usage,
 				kind: "music",
 				provider: "elevenlabs",
-				quantity: spec.seconds,
+				model: "music",
+				quantity: seconds,
 				unit: "seconds",
-				costUsd: spec.seconds * ESTIMATED_USD.perMusicSecond,
-				estimated: true,
+				costUsd: (seconds / 60) * ELEVENLABS.musicUsdPerMinute,
+				basis: "metered",
+				vendorRef: music.requestId,
+				dedupeKey: music.requestId && `elevenlabs:${music.requestId}`,
 			});
-			return stored;
+			return storeAsset(asset, music.audio, "audio/mpeg", {
+				meta: { provider: "elevenlabs", model: "music" },
+				durationMs: Math.round(spec.seconds * 1000),
+			});
 		}
 		case "sfx": {
-			const audio = await generateSfx(spec);
-			const stored = await storeAsset(asset, audio, "audio/mpeg", { meta: { provider: "elevenlabs", model: "sound-effects" } });
+			const sfx = await generateSfx(spec);
+			const stored = await storeAsset(asset, sfx.audio, "audio/mpeg", { meta: { provider: "elevenlabs", model: "sound-effects" } });
+			// Charged on the measured length, so this one is recorded after storing (which measures it).
+			// A retry pays again for the clip, and that charge is lost; sound effects cost a cent or two.
 			const seconds = (stored.durationMs ?? (spec.seconds ?? 3) * 1000) / 1000;
 			await recordUsage({
 				...usage,
 				kind: "sfx",
 				provider: "elevenlabs",
+				model: "sound-effects",
 				quantity: seconds,
 				unit: "seconds",
-				costUsd: seconds * ESTIMATED_USD.perSfxSecond,
-				estimated: true,
+				costUsd: (seconds / 60) * ELEVENLABS.sfxUsdPerMinute,
+				basis: "list",
+				vendorRef: sfx.requestId,
+				dedupeKey: sfx.requestId && `elevenlabs:${sfx.requestId}`,
 			});
 			return stored;
 		}
 		case "vector": {
 			const vector = await generateVector(spec);
+			await falUsage(vector.model, vector.charge);
 			const { bytes, contentType } = await download(vector.url, "The vector illustration");
-			const stored = await storeAsset(asset, bytes, contentType.includes("svg") ? "image/svg+xml" : contentType, {
+			return storeAsset(asset, bytes, contentType.includes("svg") ? "image/svg+xml" : contentType, {
 				meta: { model: vector.model, provider: "fal" },
 			});
-			await recordUsage({ ...usage, kind: "image", provider: "fal", model: vector.model, quantity: 1, unit: "images", costUsd: vector.costUsd, estimated: true });
-			return stored;
 		}
 		case "cutout": {
 			const source = (await assetsById(asset.projectId, [spec.sourceAssetId])).get(spec.sourceAssetId);
@@ -314,10 +351,9 @@ export async function executeGeneration(assetId: string): Promise<Asset> {
 			// Inline when small enough; otherwise a short-lived link the provider downloads from.
 			const image = (await assetDataUrl(source)) ?? (await signedUrl(source.r2Key, { expiresIn: 3600 }));
 			const cutout = await removeBackground(image);
+			await falUsage(cutout.model, cutout.charge);
 			const { bytes } = await download(cutout.url, "The cut-out");
-			const stored = await storeAsset(asset, bytes, "image/png", { meta: { model: cutout.model, provider: "fal", sourceAssetId: source.id } });
-			await recordUsage({ ...usage, kind: "image", provider: "fal", model: cutout.model, quantity: 1, unit: "images", costUsd: FAL_USD.cutout, estimated: true });
-			return stored;
+			return storeAsset(asset, bytes, "image/png", { meta: { model: cutout.model, provider: "fal", sourceAssetId: source.id } });
 		}
 		case "url":
 			return importUrl(asset, spec.url, spec.headers);

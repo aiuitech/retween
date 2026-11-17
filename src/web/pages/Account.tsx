@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { type Me, authApi, authClient, op, usd, when } from "../api.ts";
 import { Section, Snippet, useLoad } from "../ui.tsx";
 
@@ -93,10 +93,15 @@ export function Profile({ me, onChange }: { me: Me; onChange: () => void }) {
 				<div className="meter" role="img" aria-label={`${Math.round(spent * 100)}% of budget used`}>
 					<i className={spent > 0.85 ? "hot" : ""} style={{ width: `${spent * 100}%` }} />
 				</div>
-				<p className="faint mono">Narration, music and render time are estimates; images and clips are billed amounts.</p>
+				{me.budget.ownLimitUsd !== undefined && (
+					<p className="faint mono">Your own limit of {usd(me.budget.ownLimitUsd)} applies (set under cost controls).</p>
+				)}
+				<p className="faint mono">Charges are what each vendor bills for your requests, including rendering time and storage.</p>
 			</Section>
 
-			<Section index="C" title="Sessions" note="Browsers and command-line logins that are signed in as you.">
+			<CostControlsSection onChange={onChange} />
+
+			<Section index="D" title="Sessions" note="Browsers and command-line logins that are signed in as you.">
 				<div className="rows">
 					{(sessions.data ?? []).map((session) => (
 						<div className="row" key={session.id}>
@@ -121,6 +126,146 @@ export function Profile({ me, onChange }: { me: Me; onChange: () => void }) {
 				</p>
 			</Section>
 		</>
+	);
+}
+
+interface Controls {
+	clips: boolean;
+	clipMaxResolution: string;
+	clipMaxSeconds: number;
+	images: boolean;
+	imageMaxQuality: string;
+	vectors: boolean;
+	vectorPro: boolean;
+	cutouts: boolean;
+	music: boolean;
+	soundEffects: boolean;
+	narrationModel: string | null;
+	renderMaxResolution: string;
+	monthlyLimitUsd: number | null;
+}
+interface ControlsResult {
+	controls: Controls;
+	options: {
+		voiceModels: { id: string; label: string }[];
+		imageQualities: string[];
+		clipResolutions: string[];
+		renderResolutions: string[];
+	};
+}
+
+function CostControlsSection({ onChange }: { onChange: () => void }) {
+	const loaded = useLoad(() => op<ControlsResult>("account.controls"));
+	const [controls, setControls] = useState<Controls | null>(null);
+	const [status, setStatus] = useState<string | null>(null);
+	const [limit, setLimit] = useState("");
+	useEffect(() => {
+		if (!loaded.data) return;
+		setControls(loaded.data.controls);
+		setLimit(loaded.data.controls.monthlyLimitUsd === null ? "" : String(loaded.data.controls.monthlyLimitUsd));
+	}, [loaded.data]);
+	if (!controls || !loaded.data) return null;
+	const { options } = loaded.data;
+
+	const save = async (change: Partial<Controls>) => {
+		setControls({ ...controls, ...change });
+		setStatus("Saving…");
+		try {
+			const result = await op<ControlsResult>("account.controls_update", change);
+			setControls(result.controls);
+			setStatus("Saved");
+			if ("monthlyLimitUsd" in change) onChange();
+		} catch (error) {
+			setControls(controls);
+			setStatus(error instanceof Error ? error.message : "Could not save");
+		}
+		setTimeout(() => setStatus(null), 1800);
+	};
+
+	const toggle = (key: keyof Controls, title: string, note: string, extra?: ReactNode) => (
+		<div className="row control">
+			<input type="checkbox" id={`control-${key}`} checked={Boolean(controls[key])} onChange={(event) => save({ [key]: event.target.checked })} />
+			<label className="grow" htmlFor={`control-${key}`}>
+				<div className="title">{title}</div>
+				<div className="faint">{note}</div>
+			</label>
+			{extra}
+		</div>
+	);
+	const choose = (key: keyof Controls, values: { value: string; label: string }[], disabled = false) => (
+		<select className="compact" value={String(controls[key] ?? "")} disabled={disabled} aria-label={key} onChange={(event) => save({ [key]: event.target.value || null })}>
+			{values.map((option) => (
+				<option key={option.value} value={option.value}>
+					{option.label}
+				</option>
+			))}
+		</select>
+	);
+	const plain = (values: string[], suffix = "") => values.map((value) => ({ value, label: `${suffix}${value}` }));
+
+	return (
+		<Section
+			index="C"
+			title="Cost controls"
+			note="Choose what your videos may spend money on. Switched-off media is replaced by a cheaper stand-in when a video is prepared. Changes apply to new work only: nothing already made is regenerated."
+		>
+			<div className="rows">
+				{toggle(
+					"clips",
+					"Generated video clips",
+					"By far the most expensive media. Off: clip scenes use a still instead.",
+					choose("clipMaxResolution", plain(options.clipResolutions, "up to "), !controls.clips),
+				)}
+				{toggle(
+					"images",
+					"Generated images",
+					"Off: scenes fall back to the brand backdrop. Lower quality costs less.",
+					choose("imageMaxQuality", plain(options.imageQualities, "up to "), !controls.images),
+				)}
+				{toggle("vectors", "Vector illustrations", "Flat illustrations that draw themselves on.")}
+				{controls.vectors && toggle("vectorPro", "Pro vector model", "Sharper detail at about four times the price.")}
+				{toggle("cutouts", "Cut-outs", "Lifts a subject off its background for depth effects.")}
+				{toggle("music", "Generated music", "Off: videos have no music bed unless you upload one.")}
+				{toggle("soundEffects", "Generated sound effects", "Whooshes, chimes and ambience named in the storyboard.")}
+				<div className="row control">
+					<span className="spacer" />
+					<div className="grow">
+						<div className="title">Narration voice model</div>
+						<div className="faint">Flash and Turbo cost half as much per character.</div>
+					</div>
+					{choose("narrationModel", [{ value: "", label: "Follow the brand kit" }, ...options.voiceModels.map((model) => ({ value: model.id, label: model.label }))])}
+				</div>
+				<div className="row control">
+					<span className="spacer" />
+					<div className="grow">
+						<div className="title">Largest export</div>
+						<div className="faint">Bigger exports take longer to render, and render time is charged.</div>
+					</div>
+					{choose("renderMaxResolution", plain(options.renderResolutions, "up to "))}
+				</div>
+				<form
+					className="row control"
+					onSubmit={(event) => {
+						event.preventDefault();
+						const value = limit.trim() === "" ? null : Number(limit);
+						if (value === null || (Number.isFinite(value) && value >= 0)) void save({ monthlyLimitUsd: value });
+					}}
+				>
+					<span className="spacer" />
+					<div className="grow">
+						<div className="title">Own monthly limit</div>
+						<div className="faint">Stop paid work at this amount, even if your allowance is higher. Leave empty for none.</div>
+					</div>
+					<input className="compact" inputMode="decimal" placeholder="No limit" value={limit} onChange={(event) => setLimit(event.target.value)} aria-label="Own monthly limit in US dollars" />
+					<button className="btn small" type="submit" disabled={limit === (controls.monthlyLimitUsd === null ? "" : String(controls.monthlyLimitUsd))}>
+						Set
+					</button>
+				</form>
+			</div>
+			<p className="faint mono" role="status" style={{ minHeight: "1.4em", marginTop: 10 }}>
+				{status}
+			</p>
+		</Section>
 	);
 }
 
