@@ -1,6 +1,7 @@
 // Builds the Remotion bundle once (at image build time). The server only ever
 // reads the result from ./build - nothing is bundled at request time.
 import { bundle } from "@remotion/bundler";
+import "./copy-public.mjs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 

@@ -123,6 +123,7 @@ const EXTENSIONS: Record<string, string> = {
 	"font/woff": "woff",
 	"font/ttf": "ttf",
 	"font/otf": "otf",
+	"application/json": "json",
 };
 const MIME_BY_EXTENSION: Record<string, string> = {
 	...Object.fromEntries(Object.entries(EXTENSIONS).map(([mime, ext]) => [ext, mime])),
@@ -148,8 +149,11 @@ export function contentTypeFor(header: string | null | undefined, name?: string)
 	return (extension && MIME_BY_EXTENSION[extension]) || fromHeader || "application/octet-stream";
 }
 
-export function kindFor(contentType: string): "image" | "video" | "audio" | "font" | "other" {
-	const type = contentType.split("/")[0];
+export function kindFor(contentType: string): "image" | "video" | "audio" | "font" | "animation" | "other" {
+	const mime = contentType.split(";")[0]!.trim().toLowerCase();
+	// JSON is accepted only as a Lottie animation; storeAsset checks that it really is one.
+	if (mime === "application/json" || mime === "application/lottie+json") return "animation";
+	const type = mime.split("/")[0];
 	if (type === "image" || type === "video" || type === "audio" || type === "font") return type;
 	return "other";
 }

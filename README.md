@@ -65,7 +65,7 @@ npm run deploy              # build and deploy; existing secrets are kept
 npm run deploy:secrets      # same, and upload secrets from .secrets.production
 ```
 
-Secrets (in `.secrets.production`, which is git-ignored): `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENROUTER_API_KEY`, `ELEVENLABS_API_KEY`, and optionally `PEXELS_API_KEY`, `PIXABAY_API_KEY`.
+Secrets (in `.secrets.production`, which is git-ignored): `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENROUTER_API_KEY`, `ELEVENLABS_API_KEY`, and optionally `PEXELS_API_KEY`, `PIXABAY_API_KEY` (more stock) and `FAL_KEY` (subject cut-outs and vector illustrations through fal.ai).
 
 Google OAuth client: authorised redirect URI `https://retween.app/api/auth/callback/google`.
 

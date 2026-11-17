@@ -53,7 +53,8 @@ export const notes = sqliteTable(
 	(t) => [index("notes_project_idx").on(t.projectId)],
 );
 
-export const ASSET_KINDS = ["image", "video", "audio", "font", "other"] as const;
+/** `animation` is a Lottie (Bodymovin JSON) file. */
+export const ASSET_KINDS = ["image", "video", "audio", "font", "animation", "other"] as const;
 export type AssetKind = (typeof ASSET_KINDS)[number];
 export const ASSET_SOURCES = ["upload", "url", "generated", "stock"] as const;
 export type AssetSource = (typeof ASSET_SOURCES)[number];
@@ -102,6 +103,10 @@ export type GenerationSpec =
 			language?: string;
 	  }
 	| { type: "image"; prompt: string; aspectRatio: string; quality: string; referenceAssetIds: string[]; transparent?: boolean; model?: string }
+	/** A flat vector illustration (SVG). `colors` are hex values the illustration should favour. */
+	| { type: "vector"; prompt: string; aspectRatio: string; colors: string[]; background?: string; pro: boolean }
+	/** The main subject of an image asset, with its background removed. */
+	| { type: "cutout"; sourceAssetId: string }
 	| { type: "video"; prompt: string; seconds: number; aspectRatio: string; resolution: string; firstFrameAssetId?: string; withAudio: boolean; model?: string }
 	| { type: "music"; prompt: string; seconds: number; instrumental: boolean }
 	| { type: "sfx"; prompt: string; seconds?: number }
@@ -161,6 +166,10 @@ export interface ResolvedMedia {
 	/** `${sceneId}:${index}` → generated sound effect */
 	sfx: Record<string, { assetId: string; hash: string }>;
 	music?: { assetId: string; hash: string };
+	/** `prefix:name` → icon file. Missing on videos prepared before icons existed. */
+	icons?: Record<string, { assetId: string; hash: string }>;
+	/** scene id → the scene picture's subject, cut out */
+	cutout?: Record<string, { assetId: string; hash: string }>;
 }
 
 export const videos = sqliteTable(

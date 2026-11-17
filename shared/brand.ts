@@ -132,6 +132,11 @@ export const BrandVisual = z
 			})
 			.partial(),
 		stockStyle: text.describe("What stock footage should look like, and what to skip (e.g. no handshake clichés)"),
+		iconSet: z
+			.string()
+			.max(40)
+			.regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+			.describe('Iconify icon set used for icons named without a prefix, so every video uses one consistent style. e.g. "lucide" (default), "tabler", "ph", "mdi", "fluent-emoji-flat"'),
 	})
 	.partial();
 

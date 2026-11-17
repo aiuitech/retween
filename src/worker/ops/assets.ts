@@ -7,6 +7,7 @@ import { ASSET_KINDS, type GenerationSpec } from "../db/schema.ts";
 import { badRequest } from "../lib/util.ts";
 import { listVoices } from "../providers/elevenlabs.ts";
 import { IMAGE_ASPECTS, VIDEO_RESOLUTIONS } from "../providers/openrouter.ts";
+import { searchIcons, searchPlaces } from "../providers/iconify.ts";
 import { STOCK_PROVIDERS, availableProviders, getStockItem, searchStock } from "../providers/stock.ts";
 import { type Asset, assetView, createAsset, deleteAsset, getAsset, startGeneration, waitForAssets } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
@@ -132,7 +133,8 @@ export const assetOps = [
 		name: "asset.import_url",
 		title: "Import from URL",
 		description:
-			"Download an image, video, audio or font file from a public URL into the project. " +
+			"Download an image, video, audio or font file, or a Lottie animation (the .json file, e.g. from lottiefiles.com), from a public URL into the project. " +
+			"A Lottie asset can then be a scene's visual (source \"asset\"); it plays over the brand backdrop. " +
 			"For files the person has on their own device, use asset.upload_link instead.",
 		input: z.object({
 			projectId,
@@ -429,6 +431,46 @@ export const assetOps = [
 			});
 			return generateAndWait(asset, input.waitSeconds);
 		},
+	}),
+
+	defineOp({
+		name: "icon.search",
+		title: "Search icons",
+		description:
+			"Find icons for scenes (text.icon, or an icon per bullet) among 200+ open-source Iconify sets. Free. " +
+			"Use the returned name as is (\"lucide:rocket\"). Keep to one set per video so the style stays consistent: " +
+			"the brand kit's visual.iconSet is used for names written without a prefix (lucide by default). " +
+			"Glyph sets take the scene's colours; multi-colour sets (palette: true, e.g. emoji) keep their own.",
+		input: z.object({
+			query: z.string().min(2).max(100).describe("What the icon shows, in English: rocket, shield check, growth chart"),
+			sets: z.array(z.string().max(40)).max(10).optional().describe('Only these icon sets, e.g. ["lucide"] or ["ph", "tabler"]'),
+			limit: z.number().int().min(1).max(64).default(24),
+		}),
+		readOnly: true,
+		handler: async (input) => {
+			const { icons, sets } = await searchIcons({ query: input.query, prefixes: input.sets, limit: input.limit });
+			return {
+				icons: icons.map((name) => {
+					const [prefix, icon] = name.split(":");
+					return { name, previewUrl: `https://api.iconify.design/${prefix}/${icon}.svg?height=96` };
+				}),
+				sets: sets.map((set) => ({ prefix: set.prefix, name: set.name, license: set.license?.title, palette: set.palette, category: set.category })),
+			};
+		},
+	}),
+
+	defineOp({
+		name: "place.search",
+		title: "Find a place",
+		description:
+			"Look up the coordinates of a city, landmark or address (OpenStreetMap) for a map scene. " +
+			"Use the lat/lng of the best match; give the place a short display name of your own in the scene.",
+		input: z.object({
+			query: z.string().min(2).max(200).describe('e.g. "Lisbon", "Eiffel Tower", "1 Infinite Loop, Cupertino"'),
+			limit: z.number().int().min(1).max(10).default(5),
+		}),
+		readOnly: true,
+		handler: async (input) => ({ places: await searchPlaces(input.query, input.limit) }),
 	}),
 
 	defineOp({

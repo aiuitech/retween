@@ -6,7 +6,10 @@ export type {
 	TimelineAudio,
 	TimelineBackground,
 	TimelineCaption,
+	TimelineChart,
 	TimelineContent,
+	TimelineIcon,
+	TimelineMap,
 	TimelineScene,
 	TimelineTheme,
 	TransitionType,
@@ -15,10 +18,12 @@ export type {
 /** What the preflight learned about one media URL. */
 export type MediaInfo = {
 	ok: boolean;
-	kind: "image" | "video" | "audio";
+	kind: "image" | "video" | "audio" | "animation";
 	width?: number;
 	height?: number;
 	durationSec?: number;
+	/** Cut-outs: the opaque part of the picture, as fractions of its size. */
+	bbox?: { x0: number; y0: number; x1: number; y1: number };
 	error?: string;
 };
 

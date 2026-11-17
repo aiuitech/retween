@@ -150,7 +150,7 @@ app.put("/api/v1/projects/:projectId/assets", async (c) => {
 	const project = await getProject(actor, c.req.param("projectId"));
 	const name = c.req.query("name") ?? "upload";
 	const contentType = contentTypeFor(c.req.header("content-type"), name);
-	if (kindFor(contentType) === "other") throw badRequest(`Unsupported file type "${contentType}". Upload images, video, audio or fonts.`);
+	if (kindFor(contentType) === "other") throw badRequest(`Unsupported file type "${contentType}". Upload images, video, audio, fonts or Lottie JSON.`);
 	if (!c.req.raw.body || !c.req.header("content-length")) throw new AppError(411, "Send the file as the request body with a Content-Length", "length_required");
 	const asset = await createAsset({
 		projectId: project.id,

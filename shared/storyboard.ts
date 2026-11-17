@@ -11,20 +11,48 @@ import { SCENE_TYPES, TRANSITIONS } from "./timeline.ts";
 
 const short = z.string().max(300);
 
+/** An Iconify icon: `prefix:name`, or a bare name from the brand's icon set. */
+export const ICON_NAME = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*:)?[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const icon = z
+	.string()
+	.max(80)
+	.regex(ICON_NAME, 'an Iconify icon such as "lucide:rocket", or "rocket" for the brand\'s icon set')
+	.describe('Iconify icon, e.g. "lucide:rocket" or "ph:lightning". A bare name such as "rocket" uses the brand\'s icon set (lucide unless the brand kit says otherwise). Find names with icon.search');
+
+/** The icon set used when a scene names an icon without a prefix. */
+export const DEFAULT_ICON_SET = "lucide";
+
+/** `rocket` → `lucide:rocket`; names that already carry a prefix are kept. */
+export function iconName(name: string, iconSet?: string): string {
+	const trimmed = name.trim().toLowerCase();
+	return trimmed.includes(":") ? trimmed : `${(iconSet ?? DEFAULT_ICON_SET).trim().toLowerCase()}:${trimmed}`;
+}
+
+/** Every icon a storyboard uses, with the brand's set applied. */
+export function storyboardIcons(board: Storyboard, iconSet?: string): string[] {
+	const names = new Set<string>();
+	for (const scene of board.scenes) {
+		if (scene.text?.icon) names.add(iconName(scene.text.icon, iconSet));
+		for (const bullet of scene.text?.bullets ?? []) if (bullet.icon) names.add(iconName(bullet.icon, iconSet));
+	}
+	return [...names];
+}
+
 export const SceneVisual = z
 	.object({
 		source: z
-			.enum(["asset", "image", "video", "stock", "solid", "gradient", "brand"])
+			.enum(["asset", "image", "vector", "video", "stock", "solid", "gradient", "brand"])
 			.describe(
-				"asset: use an existing project asset. image: generate a still. video: generate a short clip (expensive, use sparingly). " +
+				"asset: use an existing project asset (an image, a video or a Lottie animation). image: generate a still. " +
+					"vector: generate a flat vector illustration in the brand colours that draws itself on. video: generate a short clip (expensive, use sparingly). " +
 					"stock: find free stock media. solid/gradient: flat colour. brand: the animated brand backdrop.",
 			),
-		assetId: z.string().optional().describe("source=asset: the image or video asset to show"),
+		assetId: z.string().optional().describe("source=asset: the image, video or Lottie animation to show"),
 		prompt: z
 			.string()
 			.max(4000)
 			.optional()
-			.describe("source=image|video: what to generate. Describe the subject and framing; the project's style lock is added for you"),
+			.describe("source=image|vector|video: what to generate. Describe the subject and framing; the project's style lock is added for you"),
 		cast: z
 			.array(z.string())
 			.max(6)
@@ -38,13 +66,24 @@ export const SceneVisual = z
 		color: z.string().optional().describe("source=solid: hex colour (defaults to the brand background)"),
 		colors: z.array(z.string()).min(2).max(4).optional().describe("source=gradient: hex colours"),
 		angle: z.number().optional().describe("source=gradient: angle in degrees"),
+		draw: z
+			.boolean()
+			.optional()
+			.describe("source=vector, or an SVG asset: trace the outlines first, then fill the shapes in (default true for vector)"),
+		cutout: z
+			.enum(["parallax", "isolate"])
+			.optional()
+			.describe(
+				"Still images only. Cuts the main subject out of the picture. parallax: the subject floats in front of its own background " +
+					"for a 2.5D camera push (motion without paying for a clip). isolate: the subject alone on the brand backdrop, like a product shot",
+			),
 		fit: z.enum(["cover", "contain"]).optional(),
 		focus: z
 			.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
 			.optional()
 			.describe("Point of interest (0–1 from the top-left) kept in frame when the media is cropped to other aspect ratios"),
 		startFromSec: z.number().min(0).optional().describe("Video: where in the clip to start"),
-		loop: z.boolean().optional().describe("Video: loop if the scene outlasts the clip (default true)"),
+		loop: z.boolean().optional().describe("Video or Lottie: loop if the scene outlasts it (default true)"),
 		volume: z.number().min(0).max(1).optional().describe("Video: volume of the clip's own audio (default 0, muted)"),
 	})
 	.superRefine((visual, ctx) => {
@@ -52,13 +91,14 @@ export const SceneVisual = z
 			if (!visual[field]) ctx.addIssue({ code: "custom", path: [field], message: `source "${visual.source}" needs ${field}` });
 		};
 		if (visual.source === "asset") need("assetId");
-		if (visual.source === "image" || visual.source === "video") need("prompt");
+		if (visual.source === "image" || visual.source === "vector" || visual.source === "video") need("prompt");
 		if (visual.source === "stock") need("query");
 	});
 export type SceneVisual = z.infer<typeof SceneVisual>;
 
 export const SceneText = z.object({
 	kicker: short.optional().describe("Small label above the heading"),
+	icon: icon.optional().describe("An icon badge above the heading (or the stat)"),
 	heading: short.optional(),
 	subheading: short.optional(),
 	body: z.string().max(1200).optional(),
@@ -69,6 +109,7 @@ export const SceneText = z.object({
 				cue: short
 					.optional()
 					.describe("A few words from the narration; the bullet appears as they are spoken. Omit to space bullets evenly"),
+				icon: icon.optional().describe("Shown in place of the bullet number"),
 			}),
 		)
 		.max(8)
@@ -101,6 +142,66 @@ export const SceneSfx = z.object({
 	volume: z.number().min(0).max(1).optional(),
 });
 
+const cue = short
+	.optional()
+	.describe("A few words from the narration; this item appears as they are spoken. Omit to reveal items one after another");
+
+export const SceneChart = z
+	.object({
+		kind: z
+			.enum(["column", "bar", "line", "donut"])
+			.default("column")
+			.describe("column: vertical bars. bar: horizontal bars (best for long labels and portrait videos). line: a trend over time. donut: parts of a whole"),
+		data: z
+			.array(
+				z.object({
+					label: short.describe("Category, period or share name"),
+					value: z.number(),
+					cue,
+					highlight: z.boolean().optional().describe("Draw this one in the accent colour; the rest are muted"),
+				}),
+			)
+			.min(1)
+			.max(24),
+		prefix: z.string().max(8).optional().describe('Shown before values, e.g. "$"'),
+		suffix: z.string().max(8).optional().describe('Shown after values, e.g. "%" or "k"'),
+		decimals: z.number().int().min(0).max(4).optional(),
+		max: z.number().optional().describe("Top of the value axis (defaults to the largest value)"),
+		showValues: z.boolean().optional().describe("Print each value on the chart (default true)"),
+	})
+	.superRefine((chart, ctx) => {
+		const limit = chart.kind === "line" ? 24 : chart.kind === "donut" ? 8 : 12;
+		if (chart.data.length > limit) ctx.addIssue({ code: "custom", path: ["data"], message: `a ${chart.kind} chart takes at most ${limit} items` });
+		if (chart.kind === "line" && chart.data.length < 2) ctx.addIssue({ code: "custom", path: ["data"], message: "a line chart needs at least 2 points" });
+		if (chart.kind === "donut" && chart.data.some((item) => item.value < 0)) {
+			ctx.addIssue({ code: "custom", path: ["data"], message: "donut values cannot be negative" });
+		}
+	});
+export type SceneChart = z.infer<typeof SceneChart>;
+
+export const SceneMap = z.object({
+	places: z
+		.array(
+			z.object({
+				name: short.describe("Label shown on the map"),
+				lat: z.number().min(-85).max(85),
+				lng: z.number().min(-180).max(180),
+				cue,
+			}),
+		)
+		.min(1)
+		.max(8)
+		.describe("Coordinates in decimal degrees. Look them up with place.search if you are not sure"),
+	camera: z
+		.enum(["overview", "tour"])
+		.optional()
+		.describe("overview: frame every place and pin them one by one (default). tour: fly from place to place, arriving at each on its cue"),
+	route: z.boolean().optional().describe("Draw a line through the places in order"),
+	zoom: z.number().min(1).max(16).optional().describe("Zoom when there is one place (default 11: a city). 3 is a continent, 14 a neighbourhood"),
+	style: z.enum(["light", "dark"]).optional().describe("Defaults to match the brand background"),
+});
+export type SceneMap = z.infer<typeof SceneMap>;
+
 export const Scene = z.object({
 	id: z
 		.string()
@@ -110,12 +211,15 @@ export const Scene = z.object({
 		.enum(SCENE_TYPES)
 		.describe(
 			"title: big opening headline. media: full-frame visual with optional caption text. bullets: list revealed in time with narration. " +
-				"quote: pull quote. stat: one big number. split: visual beside text. outro: logo and call to action.",
+				"quote: pull quote. stat: one big number. split: visual beside text. chart: an animated chart (set chart). " +
+				"map: an animated map with pinned places (set map). outro: logo and call to action.",
 		),
 	label: short.optional().describe("Working title for the scene, never shown"),
 	narration: z.string().max(3000).optional().describe("What the voice says. The scene lasts as long as this takes to say"),
 	visual: SceneVisual.optional().describe("What is on screen behind or beside the text. Defaults to the brand backdrop"),
 	text: SceneText.optional().describe("On-screen text"),
+	chart: SceneChart.optional().describe("type=chart: the data to plot. Values reveal in time with the narration"),
+	map: SceneMap.optional().describe("type=map: the places to show. The map is drawn in the brand colours"),
 	layout: z
 		.object({
 			align: z.enum(["left", "center"]).optional(),
@@ -165,6 +269,12 @@ export const Storyboard = z
 				ctx.addIssue({ code: "custom", path: ["scenes", index, "id"], message: `duplicate scene id "${scene.id}"` });
 			}
 			seen.add(scene.id);
+			if (scene.type === "chart" && !scene.chart) {
+				ctx.addIssue({ code: "custom", path: ["scenes", index, "chart"], message: `chart scene "${scene.id}" needs chart data` });
+			}
+			if (scene.type === "map" && !scene.map) {
+				ctx.addIssue({ code: "custom", path: ["scenes", index, "map"], message: `map scene "${scene.id}" needs map places` });
+			}
 		});
 	});
 export type Storyboard = z.infer<typeof Storyboard>;

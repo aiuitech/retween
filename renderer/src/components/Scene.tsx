@@ -3,10 +3,14 @@ import { Img, useCurrentFrame } from "remotion";
 import { mediaOk, U, useRender } from "../context.ts";
 import { contrast, isDark, mix, pickReadable, readableOn, withAlpha } from "../lib/color.ts";
 import { contentRegion, type Format, inset, type Rect } from "../lib/layout.ts";
+import { mapInk } from "../lib/mapStyle.ts";
 import { clamp01, progress } from "../lib/motion.ts";
 import type { TimelineContent, TimelineScene, TimelineTheme } from "../types.ts";
-import { Background, hasMedia } from "./Background.tsx";
+import { Background, hasMedia, isStaged } from "./Background.tsx";
+import { Chart } from "./Chart.tsx";
 import { FitBox } from "./FitBox.tsx";
+import { Icon } from "./Icon.tsx";
+import { MapScene } from "./MapScene.tsx";
 import { Reveal, Rule, SplitText, typewriterSeconds } from "./Text.tsx";
 
 type Palette = {
@@ -37,8 +41,10 @@ function paletteFor(theme: TimelineTheme, scene: TimelineScene, overMedia: boole
 	}
 	const bg = scene.background;
 	const base =
-		scene.type === "split"
-			? c.background
+		scene.type === "map" && scene.content.map
+			? mapInk(c, scene.content.map.style).land
+			: scene.type === "split"
+				? c.background
 			: bg.kind === "solid"
 				? bg.color
 				: bg.kind === "gradient"
@@ -83,10 +89,17 @@ function sizesFor(type: TimelineScene["type"], format: Format, centered: boolean
 				stat: pick(210, 190, 200, 210),
 				column: 1100,
 			};
+		case "chart":
+			return { ...base, heading: pick(64, 58, 60, 64), column: 1520 };
+		case "map":
+			return { ...base, heading: pick(72, 64, 64, 68), column: 1100 };
 		case "outro":
 			return { ...base, heading: pick(96, 86, 86, 92), sub: 38, column: 1300 };
 	}
 }
+
+/** Height of a chart, in design px, per frame format. */
+const CHART_HEIGHT = { landscape: 470, square: 560, portrait: 640, tall: 780 } as const;
 
 const QUOTE_CHARS = /^["'“”‘’«»„]/;
 
@@ -115,8 +128,10 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 	const visibleFrames = scene.durationInFrames + tail;
 
 	const isSplit = scene.type === "split";
+	const isMap = scene.type === "map" && !!c.map;
 	const stacked = isSplit && format !== "landscape";
-	const overMedia = !isSplit && hasMedia(scene.background, ok);
+	const overMedia = !isSplit && !isMap && hasMedia(scene.background, ok);
+	const staged = !isSplit && !isMap && isStaged(scene.background, ok);
 	const pal = paletteFor(theme, scene, overMedia);
 	const size = sizesFor(scene.type, format, align === "center");
 	const caption = captioned ? ctx.caption : null;
@@ -211,7 +226,53 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 		);
 	};
 
-	const kicker = (gap = 0) => {
+	const iconBadge = (gap = 0) => {
+		const icon = c.icon;
+		if (!icon || !ok(icon.src)) return;
+		const start = at();
+		const d = scene.type === "title" || scene.type === "stat" ? 124 : 108;
+		push(
+			"icon",
+			gap,
+			<Reveal
+				start={start}
+				anim={anim === "typewriter" || anim === "fade" ? "fade" : "pop"}
+				origin={centered ? "center" : "left center"}
+				style={{ display: "flex", justifyContent: centered ? "center" : "flex-start" }}
+			>
+				<div
+					style={{
+						width: U(d),
+						height: U(d),
+						flex: "none",
+						borderRadius: "50%",
+						display: "flex",
+						alignItems: "center",
+						justifyContent: "center",
+						background: icon.mono ? withAlpha(pal.accent, overMedia ? 0.24 : 0.13) : withAlpha(pal.text, overMedia ? 0.14 : 0.06),
+					}}
+				>
+					<Icon icon={icon} size={U(d * (icon.mono ? 0.5 : 0.62))} color={pal.accent} />
+				</div>
+			</Reveal>,
+		);
+	};
+
+	const chartPart = (gap: number) => {
+		if (!c.chart) return;
+		push(
+			"chart",
+			gap,
+			<Chart
+				chart={c.chart}
+				height={CHART_HEIGHT[format]}
+				wide={format === "landscape"}
+				pal={{ text: pal.text, muted: pal.muted, accent: pal.accent, rule: pal.rule, base: pal.base }}
+			/>,
+		);
+	};
+
+	const kicker = (gap = 30) => {
 		if (!c.kicker) return;
 		const start = at();
 		push(
@@ -274,6 +335,8 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 	const bullets = (gap: number) => {
 		if (!c.bullets?.length) return;
 		const dim = 0.45 * fps;
+		// Icons are wider than a two-digit number; when any bullet has one, every marker gets the same column.
+		const numberWidth = c.bullets.some((b) => b.icon && ok(b.icon.src)) ? Math.max(52, size.bullet) : 52;
 		push(
 			"bullets",
 			gap,
@@ -286,13 +349,20 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 						<div key={i} style={{ position: "relative", padding: `${U(22)} 0`, opacity: focus }}>
 							<Rule start={bullet.atFrame} axis="x" origin="left center" style={{ position: "absolute", left: 0, right: 0, top: 0, height: U(2), background: pal.rule }} />
 							<div style={{ display: "flex", alignItems: "baseline", gap: U(30) }}>
-								<Reveal
-									start={bullet.atFrame}
-									anim="fade"
-									style={{ ...bodyFont, flex: "none", width: U(52), fontWeight: strong, fontSize: S(size.bullet * 0.5), letterSpacing: "0.1em", color: pal.accent, fontVariantNumeric: "tabular-nums" }}
-								>
-									{String(i + 1).padStart(2, "0")}
-								</Reveal>
+								{bullet.icon && ok(bullet.icon.src) ? (
+									// An icon has no text baseline: its bottom edge is used, so a negative margin drops it to sit like a glyph.
+									<Reveal start={bullet.atFrame} anim="fade" style={{ flex: "none", width: U(numberWidth), marginBottom: U(-size.bullet * 0.17) }}>
+										<Icon icon={bullet.icon} size={U(size.bullet * 0.95)} color={pal.accent} />
+									</Reveal>
+								) : (
+									<Reveal
+										start={bullet.atFrame}
+										anim="fade"
+										style={{ ...bodyFont, flex: "none", width: U(numberWidth), fontWeight: strong, fontSize: S(size.bullet * 0.5), letterSpacing: "0.1em", color: pal.accent, fontVariantNumeric: "tabular-nums" }}
+									>
+										{String(i + 1).padStart(2, "0")}
+									</Reveal>
+								)}
 								<div data-block style={{ ...bodyFont, flex: 1, minWidth: 0, fontSize: U(size.bullet), lineHeight: 1.24, letterSpacing: "-0.008em", color: pal.text, textWrap: "pretty" }}>
 									<SplitText text={bullet.text} start={bullet.atFrame} caretColor={pal.accent} />
 								</div>
@@ -426,6 +496,7 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 	// --- order per scene type -------------------------------------------------
 	switch (scene.type) {
 		case "stat":
+			iconBadge();
 			kicker();
 			stat(28);
 			heading(40);
@@ -436,6 +507,7 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 			cta(48);
 			break;
 		case "quote":
+			iconBadge();
 			kicker();
 			heading(24, { small: true });
 			quote(c.kicker || c.heading ? 44 : 0);
@@ -447,6 +519,7 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 			break;
 		case "outro":
 			stackLogo();
+			iconBadge(48);
 			kicker(56);
 			heading(c.kicker ? 28 : 56);
 			paragraph("sub", c.subheading, size.sub, 28, pal.muted, "balance");
@@ -456,7 +529,17 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 			quote(48);
 			cta(60);
 			break;
+		case "chart":
+			iconBadge();
+			kicker();
+			heading(26);
+			paragraph("sub", c.subheading, size.sub, 20, pal.muted, "balance");
+			paragraph("body", c.body, size.body, 18, pal.muted);
+			chartPart(52);
+			cta(48);
+			break;
 		default:
+			iconBadge();
 			kicker();
 			heading(scene.type === "title" ? 34 : 28);
 			paragraph("sub", c.subheading, size.sub, scene.type === "title" ? 36 : 26, scene.type === "title" ? pal.text : pal.muted, "balance");
@@ -467,6 +550,26 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 			cta(52);
 	}
 
+	// A staged visual (Lottie, a subject on its own) takes the part of the frame the text does not.
+	let stage: Rect | undefined;
+	if (staged) {
+		const safe = frame.safe;
+		if (!parts.length) stage = safe;
+		else if (format === "landscape" && !centered && textPosition === "center") {
+			const middle = W * 0.5;
+			stage = { x: middle, y: safe.y, w: safe.x + safe.w - middle, h: safe.h };
+			region = { ...region, w: Math.min(region.w, middle - region.x - 48 * u) };
+		} else if (textPosition === "top") stage = { ...safe, y: safe.y + safe.h * 0.44, h: safe.h * 0.56 };
+		else {
+			// Text at the bottom, or centred where there is no room beside it: the visual takes the top, the text what is below.
+			stage = { ...safe, h: safe.h * (format === "landscape" ? 0.56 : 0.52) };
+			if (textPosition === "center") {
+				const top = stage.y + stage.h + 40 * u;
+				region = { ...region, y: Math.max(region.y, top), h: Math.max(0, region.y + region.h - Math.max(region.y, top)) };
+			}
+		}
+	}
+
 	const fitKey = JSON.stringify([c, scene.type, align]);
 	const columnMax = format === "landscape" && !isSplit ? size.column * u : undefined;
 	const scrim = overMedia ? theme.scrim : 0;
@@ -474,9 +577,25 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 
 	return (
 		<div style={{ position: "absolute", inset: 0, overflow: "hidden", background: isSplit ? theme.colors.background : undefined }}>
-			<div style={{ position: "absolute", left: mediaRect.x, top: mediaRect.y, width: mediaRect.w, height: mediaRect.h, overflow: "hidden" }}>
-				<Background scene={scene} width={mediaRect.w} height={mediaRect.h} visibleFrames={visibleFrames} />
-			</div>
+			{isMap ? (
+				<MapScene map={c.map!} seed={scene.id} width={W} height={H} visibleFrames={visibleFrames} textPosition={textPosition} hasText={parts.length > 0} />
+			) : (
+				<div style={{ position: "absolute", left: mediaRect.x, top: mediaRect.y, width: mediaRect.w, height: mediaRect.h, overflow: "hidden" }}>
+					<Background scene={scene} width={mediaRect.w} height={mediaRect.h} visibleFrames={visibleFrames} stage={stage} />
+				</div>
+			)}
+			{isMap && parts.length > 0 ? (
+				// The map fades into the background colour behind the text, so type reads in the theme's own colours.
+				<div
+					style={{
+						position: "absolute",
+						inset: 0,
+						background: edge
+							? `linear-gradient(${edge}, ${withAlpha(pal.base, 0.95)} 0%, ${withAlpha(pal.base, 0.82)} 24%, ${withAlpha(pal.base, 0)} 44%)`
+							: withAlpha(pal.base, 0.55),
+					}}
+				/>
+			) : null}
 			{scrim > 0 && parts.length > 0 ? (
 				scene.type === "media" && edge ? (
 					// Footage-led scene: darken only the edge the text sits on.

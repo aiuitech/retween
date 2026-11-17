@@ -7,3 +7,5 @@ ELEVENLABS_API_KEY=
 # Optional: more and better free stock (both keys are free)
 # PEXELS_API_KEY=
 # PIXABAY_API_KEY=
+# Optional: subject cut-outs and vector illustrations (fal.ai)
+# FAL_KEY=

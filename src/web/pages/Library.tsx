@@ -20,7 +20,7 @@ interface VideoRow {
 }
 interface AssetRow {
 	id: string;
-	kind: "image" | "video" | "audio" | "font" | "other";
+	kind: "image" | "video" | "audio" | "font" | "animation" | "other";
 	name: string;
 	description?: string;
 	tags: string[];
@@ -90,9 +90,10 @@ export function Library() {
 	);
 }
 
-const ACCEPT = "image/*,video/*,audio/*,font/*,.ttf,.otf,.woff,.woff2";
+const ACCEPT = "image/*,video/*,audio/*,font/*,.ttf,.otf,.woff,.woff2,.json";
 const ACCEPTED_KINDS = ["image/", "video/", "audio/", "font/"];
-const FONT_FILE = /\.(ttf|otf|woff2?)$/i;
+/** Fonts and Lottie animations (JSON) often arrive without a usable MIME type. */
+const BY_EXTENSION = /\.(ttf|otf|woff2?|json)$/i;
 
 interface Upload {
 	key: string;
@@ -124,8 +125,8 @@ function Assets({ projectId, linked, onChange }: { projectId: string; linked: bo
 		setUploads((list) => [...list.filter((u) => !u.done), ...batch.map(({ file, key }) => ({ key, name: file.name, progress: 0 }))]);
 		// One at a time: large video files would otherwise compete for the same connection.
 		for (const { file, key } of batch) {
-			if (!ACCEPTED_KINDS.some((prefix) => file.type.startsWith(prefix)) && !FONT_FILE.test(file.name)) {
-				patch(key, { error: "Not an image, video, audio or font file" });
+			if (!ACCEPTED_KINDS.some((prefix) => file.type.startsWith(prefix)) && !BY_EXTENSION.test(file.name)) {
+				patch(key, { error: "Not an image, video, audio, font or Lottie file" });
 				continue;
 			}
 			try {
@@ -223,6 +224,8 @@ function Assets({ projectId, linked, onChange }: { projectId: string; linked: bo
 								) : asset.kind === "audio" ? (
 									// biome-ignore lint/a11y/useMediaCaption: user-supplied audio has no captions
 									<audio src={asset.url} preload="none" controls />
+								) : asset.kind === "animation" ? (
+									<span className="glyph">Lottie</span>
 								) : (
 									<span className="glyph">Aa</span>
 								)}
