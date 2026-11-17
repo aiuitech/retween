@@ -1,0 +1,821 @@
+{
+	"version": 1,
+	"fps": 30,
+	"durationInFrames": 950,
+	"theme": {
+		"colors": {
+			"primary": "#7C5CFF",
+			"secondary": "#19C2A0",
+			"accent": "#FFD23F",
+			"background": "#0E0F13",
+			"surface": "#1A1C23",
+			"text": "#F5F6F8",
+			"mutedText": "#9AA1AE"
+		},
+		"fonts": {
+			"heading": {
+				"family": "Definitely Not A Real Font",
+				"weight": 800
+			},
+			"body": {
+				"family": "Space Grotesk",
+				"weight": 400
+			}
+		},
+		"radius": 40,
+		"motion": {
+			"energy": "punchy",
+			"textAnimation": "pop",
+			"kenBurns": "strong"
+		},
+		"captions": {
+			"enabled": true,
+			"mode": "phrase",
+			"position": "top",
+			"uppercase": true,
+			"highlightColor": "#FFD23F",
+			"background": "box"
+		},
+		"scrim": 0.6,
+		"logo": {
+			"src": "asset://logo.svg",
+			"darkSrc": "asset://logo-dark.svg"
+		},
+		"watermark": {
+			"src": "asset://watermark.svg",
+			"position": "bottom-right",
+			"opacity": 0.5,
+			"scale": 0.09
+		}
+	},
+	"scenes": [
+		{
+			"id": "open",
+			"type": "title",
+			"startFrame": 0,
+			"durationInFrames": 129,
+			"transition": {
+				"type": "cut",
+				"durationInFrames": 0
+			},
+			"background": {
+				"kind": "brand"
+			},
+			"layout": {
+				"align": "center",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"kicker": "Introducing",
+				"heading": "An unreasonably long headline that keeps going well past the point where a sensible editor would have stopped it, to prove nothing overflows",
+				"subheading": "Followed by a subheading that is also far longer than it should be, because real customers paste whole paragraphs into every field they are given.",
+				"showLogo": true
+			}
+		},
+		{
+			"id": "view",
+			"type": "media",
+			"startFrame": 129,
+			"durationInFrames": 109,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 18
+			},
+			"background": {
+				"kind": "video",
+				"src": "asset://missing-clip.mp4",
+				"fit": "cover",
+				"startFromSec": 0.5,
+				"loop": true,
+				"volume": 0.25,
+				"playbackRate": 1,
+				"focus": {
+					"x": 0.4,
+					"y": 0.5
+				}
+			},
+			"layout": {
+				"align": "left",
+				"textPosition": "bottom",
+				"mediaSide": "right"
+			},
+			"content": {
+				"kicker": "One view",
+				"heading": "Everything on your plate, in one place",
+				"lowerThird": {
+					"title": "Maya Okafor",
+					"subtitle": "Product lead, Northwind"
+				}
+			}
+		},
+		{
+			"id": "how",
+			"type": "bullets",
+			"startFrame": 238,
+			"durationInFrames": 218,
+			"transition": {
+				"type": "slide-left",
+				"durationInFrames": 20
+			},
+			"background": {
+				"kind": "brand"
+			},
+			"layout": {
+				"align": "left",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"kicker": "How it works",
+				"heading": "Three steps to a lighter week",
+				"bullets": [
+					{
+						"text": "Capture tasks in seconds",
+						"atFrame": 21
+					},
+					{
+						"text": "Let the schedule arrange itself",
+						"atFrame": 72
+					},
+					{
+						"text": "Protect time for deep work",
+						"atFrame": 136
+					},
+					{
+						"text": "A fourth point with a Supercalifragilisticexpialidocious-length word and a long tail of extra explanation",
+						"atFrame": 150
+					},
+					{
+						"text": "And a fifth, because lists grow",
+						"atFrame": 170
+					}
+				]
+			}
+		},
+		{
+			"id": "proof",
+			"type": "stat",
+			"startFrame": 456,
+			"durationInFrames": 121,
+			"transition": {
+				"type": "zoom",
+				"durationInFrames": 18
+			},
+			"background": {
+				"kind": "image",
+				"src": "asset://missing-photo.jpg",
+				"fit": "cover",
+				"focus": {
+					"x": 0.7,
+					"y": 0.5
+				}
+			},
+			"layout": {
+				"align": "center",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"kicker": "The result",
+				"stat": {
+					"value": "1,284,000",
+					"numeric": 1284000,
+					"prefix": "$",
+					"label": "in pipeline influenced during the first quarter after launch"
+				},
+				"showLogo": true
+			}
+		},
+		{
+			"id": "together",
+			"type": "split",
+			"startFrame": 577,
+			"durationInFrames": 140,
+			"transition": {
+				"type": "wipe",
+				"durationInFrames": 20
+			},
+			"background": {
+				"kind": "image",
+				"src": "asset://photo-2.jpg",
+				"fit": "cover",
+				"focus": {
+					"x": 0.34,
+					"y": 0.4
+				}
+			},
+			"layout": {
+				"align": "left",
+				"textPosition": "center",
+				"mediaSide": "left"
+			},
+			"content": {
+				"kicker": "Together at last",
+				"heading": "Calendar and to-dos in the same place",
+				"body": "Drag a task onto your day and Northwind finds the time for it. Move a meeting and everything else follows.",
+				"bullets": [
+					{
+						"text": "Works with the tools you have",
+						"atFrame": 30
+					},
+					{
+						"text": "No migration weekend",
+						"atFrame": 60
+					}
+				]
+			}
+		},
+		{
+			"id": "voice",
+			"type": "quote",
+			"startFrame": 717,
+			"durationInFrames": 128,
+			"transition": {
+				"type": "slide-up",
+				"durationInFrames": 20
+			},
+			"background": {
+				"kind": "gradient",
+				"colors": [
+					"#1F3A5F",
+					"#132640"
+				],
+				"angle": 160
+			},
+			"layout": {
+				"align": "center",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"quote": "We replaced three planning tools, two spreadsheets and a standing Monday meeting, and nobody on the team has asked for any of them back since.",
+				"attribution": "Priya Raman, Head of Operations at Lumen"
+			}
+		},
+		{
+			"id": "close",
+			"type": "outro",
+			"startFrame": 845,
+			"durationInFrames": 105,
+			"transition": {
+				"type": "fade",
+				"durationInFrames": 20
+			},
+			"background": {
+				"kind": "brand"
+			},
+			"layout": {
+				"align": "center",
+				"textPosition": "center",
+				"mediaSide": "right"
+			},
+			"content": {
+				"heading": "Start planning the calm way",
+				"subheading": "Free for teams of up to five.",
+				"cta": {
+					"text": "Start free today",
+					"url": "https://northwind.example/start"
+				}
+			}
+		}
+	],
+	"audio": [
+		{
+			"id": "narration-open",
+			"kind": "narration",
+			"src": "asset://narration-open.m4a",
+			"startFrame": 16,
+			"durationInFrames": 99,
+			"trimStartSec": 0,
+			"volume": 1,
+			"loop": false,
+			"fadeInFrames": 0,
+			"fadeOutFrames": 0
+		},
+		{
+			"id": "narration-view",
+			"kind": "narration",
+			"src": "asset://narration-view.m4a",
+			"startFrame": 151,
+			"durationInFrames": 73,
+			"trimStartSec": 0,
+			"volume": 1,
+			"loop": false,
+			"fadeInFrames": 0,
+			"fadeOutFrames": 0
+		},
+		{
+			"id": "narration-how",
+			"kind": "narration",
+			"src": "asset://narration-how.m4a",
+			"startFrame": 262,
+			"durationInFrames": 180,
+			"trimStartSec": 0,
+			"volume": 1,
+			"loop": false,
+			"fadeInFrames": 0,
+			"fadeOutFrames": 0
+		},
+		{
+			"id": "narration-proof",
+			"kind": "narration",
+			"src": "asset://narration-proof.m4a",
+			"startFrame": 478,
+			"durationInFrames": 85,
+			"trimStartSec": 0,
+			"volume": 1,
+			"loop": false,
+			"fadeInFrames": 0,
+			"fadeOutFrames": 0
+		},
+		{
+			"id": "narration-together",
+			"kind": "narration",
+			"src": "asset://narration-together.m4a",
+			"startFrame": 601,
+			"durationInFrames": 102,
+			"trimStartSec": 0,
+			"volume": 1,
+			"loop": false,
+			"fadeInFrames": 0,
+			"fadeOutFrames": 0
+		},
+		{
+			"id": "narration-voice",
+			"kind": "narration",
+			"src": "asset://missing-narration.m4a",
+			"startFrame": 741,
+			"durationInFrames": 90,
+			"trimStartSec": 0,
+			"volume": 1,
+			"loop": false,
+			"fadeInFrames": 0,
+			"fadeOutFrames": 0
+		},
+		{
+			"id": "music",
+			"kind": "music",
+			"src": "asset://music.mp3",
+			"startFrame": 0,
+			"durationInFrames": 950,
+			"trimStartSec": 0,
+			"volume": 0.5,
+			"loop": true,
+			"fadeInFrames": 20,
+			"fadeOutFrames": 45,
+			"duck": {
+				"volume": 0.12,
+				"ranges": [
+					[
+						16,
+						115
+					],
+					[
+						151,
+						224
+					],
+					[
+						262,
+						442
+					],
+					[
+						478,
+						563
+					],
+					[
+						601,
+						703
+					],
+					[
+						741,
+						831
+					]
+				],
+				"rampFrames": 10
+			}
+		},
+		{
+			"id": "whoosh",
+			"kind": "sfx",
+			"src": "asset://whoosh.wav",
+			"startFrame": 456,
+			"durationInFrames": 21,
+			"trimStartSec": 0,
+			"volume": 0.7,
+			"loop": false,
+			"fadeInFrames": 0,
+			"fadeOutFrames": 4
+		}
+	],
+	"captions": [
+		{
+			"startFrame": 16,
+			"endFrame": 50,
+			"text": "Meet Northwind.",
+			"words": [
+				{
+					"text": "Meet",
+					"startFrame": 16,
+					"endFrame": 25
+				},
+				{
+					"text": "Northwind.",
+					"startFrame": 25,
+					"endFrame": 42
+				}
+			]
+		},
+		{
+			"startFrame": 48,
+			"endFrame": 117,
+			"text": "The calm way to plan a busy week.",
+			"words": [
+				{
+					"text": "The",
+					"startFrame": 48,
+					"endFrame": 56
+				},
+				{
+					"text": "calm",
+					"startFrame": 56,
+					"endFrame": 65
+				},
+				{
+					"text": "way",
+					"startFrame": 65,
+					"endFrame": 72
+				},
+				{
+					"text": "to",
+					"startFrame": 72,
+					"endFrame": 78
+				},
+				{
+					"text": "plan",
+					"startFrame": 78,
+					"endFrame": 87
+				},
+				{
+					"text": "a",
+					"startFrame": 87,
+					"endFrame": 91
+				},
+				{
+					"text": "busy",
+					"startFrame": 91,
+					"endFrame": 100
+				},
+				{
+					"text": "week.",
+					"startFrame": 100,
+					"endFrame": 109
+				}
+			]
+		},
+		{
+			"startFrame": 151,
+			"endFrame": 228,
+			"text": "It starts with a single view of everything on your plate.",
+			"words": [
+				{
+					"text": "It",
+					"startFrame": 151,
+					"endFrame": 155
+				},
+				{
+					"text": "starts",
+					"startFrame": 155,
+					"endFrame": 163
+				},
+				{
+					"text": "with",
+					"startFrame": 163,
+					"endFrame": 169
+				},
+				{
+					"text": "a",
+					"startFrame": 169,
+					"endFrame": 172
+				},
+				{
+					"text": "single",
+					"startFrame": 172,
+					"endFrame": 180
+				},
+				{
+					"text": "view",
+					"startFrame": 180,
+					"endFrame": 186
+				},
+				{
+					"text": "of",
+					"startFrame": 186,
+					"endFrame": 190
+				},
+				{
+					"text": "everything",
+					"startFrame": 190,
+					"endFrame": 203
+				},
+				{
+					"text": "on",
+					"startFrame": 203,
+					"endFrame": 207
+				},
+				{
+					"text": "your",
+					"startFrame": 207,
+					"endFrame": 213
+				},
+				{
+					"text": "plate.",
+					"startFrame": 213,
+					"endFrame": 220
+				}
+			]
+		},
+		{
+			"startFrame": 262,
+			"endFrame": 315,
+			"text": "Capture tasks in seconds.",
+			"words": [
+				{
+					"text": "Capture",
+					"startFrame": 262,
+					"endFrame": 276
+				},
+				{
+					"text": "tasks",
+					"startFrame": 276,
+					"endFrame": 287
+				},
+				{
+					"text": "in",
+					"startFrame": 287,
+					"endFrame": 293
+				},
+				{
+					"text": "seconds.",
+					"startFrame": 293,
+					"endFrame": 307
+				}
+			]
+		},
+		{
+			"startFrame": 313,
+			"endFrame": 379,
+			"text": "Let the schedule arrange itself.",
+			"words": [
+				{
+					"text": "Let",
+					"startFrame": 313,
+					"endFrame": 321
+				},
+				{
+					"text": "the",
+					"startFrame": 321,
+					"endFrame": 328
+				},
+				{
+					"text": "schedule",
+					"startFrame": 328,
+					"endFrame": 344
+				},
+				{
+					"text": "arrange",
+					"startFrame": 344,
+					"endFrame": 359
+				},
+				{
+					"text": "itself.",
+					"startFrame": 359,
+					"endFrame": 371
+				}
+			]
+		},
+		{
+			"startFrame": 377,
+			"endFrame": 444,
+			"text": "Then protect time for deep work.",
+			"words": [
+				{
+					"text": "Then",
+					"startFrame": 377,
+					"endFrame": 386
+				},
+				{
+					"text": "protect",
+					"startFrame": 386,
+					"endFrame": 401
+				},
+				{
+					"text": "time",
+					"startFrame": 401,
+					"endFrame": 410
+				},
+				{
+					"text": "for",
+					"startFrame": 410,
+					"endFrame": 418
+				},
+				{
+					"text": "deep",
+					"startFrame": 418,
+					"endFrame": 427
+				},
+				{
+					"text": "work.",
+					"startFrame": 427,
+					"endFrame": 436
+				}
+			]
+		},
+		{
+			"startFrame": 478,
+			"endFrame": 566,
+			"text": "Teams using Northwind win back four hours every week.",
+			"words": [
+				{
+					"text": "Teams",
+					"startFrame": 478,
+					"endFrame": 487
+				},
+				{
+					"text": "using",
+					"startFrame": 487,
+					"endFrame": 496
+				},
+				{
+					"text": "Northwind",
+					"startFrame": 496,
+					"endFrame": 511
+				},
+				{
+					"text": "win",
+					"startFrame": 511,
+					"endFrame": 517
+				},
+				{
+					"text": "back",
+					"startFrame": 517,
+					"endFrame": 525
+				},
+				{
+					"text": "four",
+					"startFrame": 525,
+					"endFrame": 532
+				},
+				{
+					"text": "hours",
+					"startFrame": 532,
+					"endFrame": 541
+				},
+				{
+					"text": "every",
+					"startFrame": 541,
+					"endFrame": 550
+				},
+				{
+					"text": "week.",
+					"startFrame": 550,
+					"endFrame": 558
+				}
+			]
+		},
+		{
+			"startFrame": 601,
+			"endFrame": 706,
+			"text": "Your calendar and your to-do list finally live in the same place.",
+			"words": [
+				{
+					"text": "Your",
+					"startFrame": 601,
+					"endFrame": 609
+				},
+				{
+					"text": "calendar",
+					"startFrame": 609,
+					"endFrame": 622
+				},
+				{
+					"text": "and",
+					"startFrame": 622,
+					"endFrame": 628
+				},
+				{
+					"text": "your",
+					"startFrame": 628,
+					"endFrame": 636
+				},
+				{
+					"text": "to-do",
+					"startFrame": 636,
+					"endFrame": 643
+				},
+				{
+					"text": "list",
+					"startFrame": 643,
+					"endFrame": 651
+				},
+				{
+					"text": "finally",
+					"startFrame": 651,
+					"endFrame": 663
+				},
+				{
+					"text": "live",
+					"startFrame": 663,
+					"endFrame": 670
+				},
+				{
+					"text": "in",
+					"startFrame": 670,
+					"endFrame": 675
+				},
+				{
+					"text": "the",
+					"startFrame": 675,
+					"endFrame": 681
+				},
+				{
+					"text": "same",
+					"startFrame": 681,
+					"endFrame": 689
+				},
+				{
+					"text": "place.",
+					"startFrame": 689,
+					"endFrame": 698
+				}
+			]
+		},
+		{
+			"startFrame": 741,
+			"endFrame": 834,
+			"text": "It feels like someone tidied my week before I even woke up.",
+			"words": [
+				{
+					"text": "It",
+					"startFrame": 741,
+					"endFrame": 746
+				},
+				{
+					"text": "feels",
+					"startFrame": 746,
+					"endFrame": 754
+				},
+				{
+					"text": "like",
+					"startFrame": 754,
+					"endFrame": 761
+				},
+				{
+					"text": "someone",
+					"startFrame": 761,
+					"endFrame": 773
+				},
+				{
+					"text": "tidied",
+					"startFrame": 773,
+					"endFrame": 782
+				},
+				{
+					"text": "my",
+					"startFrame": 782,
+					"endFrame": 787
+				},
+				{
+					"text": "week",
+					"startFrame": 787,
+					"endFrame": 794
+				},
+				{
+					"text": "before",
+					"startFrame": 794,
+					"endFrame": 804
+				},
+				{
+					"text": "I",
+					"startFrame": 804,
+					"endFrame": 807
+				},
+				{
+					"text": "even",
+					"startFrame": 807,
+					"endFrame": 815
+				},
+				{
+					"text": "woke",
+					"startFrame": 815,
+					"endFrame": 822
+				},
+				{
+					"text": "up.",
+					"startFrame": 822,
+					"endFrame": 826
+				}
+			]
+		}
+	]
+}

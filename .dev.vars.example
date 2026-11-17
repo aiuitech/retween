@@ -1,0 +1,9 @@
+# Copy to .dev.vars for local development (`npm run dev`).
+BETTER_AUTH_SECRET=any-long-random-string-at-least-32-characters
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+OPENROUTER_API_KEY=
+ELEVENLABS_API_KEY=
+# Optional: more and better free stock (both keys are free)
+# PEXELS_API_KEY=
+# PIXABAY_API_KEY=

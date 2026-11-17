@@ -1,0 +1,24 @@
+# Build context for renderer/Dockerfile (built from the repo root).
+node_modules
+**/node_modules
+.git
+.env*
+**/.env*
+.dev.vars*
+**/.dev.vars*
+dist
+**/dist
+.cloudflare
+.wrangler
+**/.wrangler
+
+# Renderer outputs and local-only fixtures
+renderer/build
+renderer/out
+renderer/fixtures/media
+renderer/fixtures/out
+**/.DS_Store
+
+# Local secrets must never enter an image
+.secrets*
+**/.secrets*
