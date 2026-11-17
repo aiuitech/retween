@@ -6,8 +6,9 @@ import { assetOps } from "./assets.ts";
 import { projectOps } from "./projects.ts";
 import type { Op } from "./registry.ts";
 import { videoOps } from "./videos.ts";
+import { youtubeOps } from "./youtube.ts";
 
-export const ops: Op[] = [...projectOps, ...assetOps, ...videoOps, ...adminOps];
+export const ops: Op[] = [...projectOps, ...assetOps, ...videoOps, ...youtubeOps, ...adminOps];
 const byName = new Map(ops.map((op) => [op.name, op]));
 
 /** Operations the actor is allowed to see. */

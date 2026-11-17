@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { BrandKit } from "../../../shared/brand.ts";
 import type { Storyboard } from "../../../shared/storyboard.ts";
 import type { AspectRatio, Resolution, Timeline } from "../../../shared/timeline.ts";
@@ -245,4 +245,89 @@ export const usageEvents = sqliteTable(
 		createdAt: createdAt(),
 	},
 	(t) => [index("usage_user_idx").on(t.userId, t.createdAt)],
+);
+
+/**
+ * A YouTube channel a person has allowed Retween to publish to. Tokens are
+ * encrypted at rest (see services/youtube.ts). One row per channel, so a
+ * person can connect several, including brand-account channels.
+ */
+export const youtubeChannels = sqliteTable(
+	"youtube_channels",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** YouTube's id for the channel (UC…). */
+		channelId: text("channel_id").notNull(),
+		title: text("title").notNull(),
+		/** The channel's @handle, when it has one. */
+		handle: text("handle"),
+		thumbnailUrl: text("thumbnail_url"),
+		refreshToken: text("refresh_token").notNull(),
+		accessToken: text("access_token"),
+		accessTokenExpiresAt: integer("access_token_expires_at", { mode: "timestamp_ms" }),
+		scope: text("scope"),
+		/** `reconnect` once Google stops accepting the refresh token (revoked, or the password changed). */
+		status: text("status").$type<"active" | "reconnect">().notNull().default("active"),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [uniqueIndex("youtube_channels_user_channel_idx").on(t.userId, t.channelId)],
+);
+
+export const YOUTUBE_PRIVACY = ["private", "unlisted", "public"] as const;
+export type YoutubePrivacy = (typeof YOUTUBE_PRIVACY)[number];
+
+/** What was asked for when publishing. Read by the publish workflow. */
+export interface YoutubePublishRequest {
+	title: string;
+	description: string;
+	tags: string[];
+	categoryId: string;
+	privacy: YoutubePrivacy;
+	publishAt?: string;
+	madeForKids: boolean;
+	containsSyntheticMedia: boolean;
+	notifySubscribers: boolean;
+	language?: string;
+	captions: boolean;
+	thumbnailAssetId?: string;
+	playlistId?: string;
+}
+
+export type YoutubeUploadStatus = "queued" | "uploading" | "finishing" | "done" | "failed";
+
+/** One render sent to one YouTube channel. Kept after a channel is disconnected, as history. */
+export const youtubeUploads = sqliteTable(
+	"youtube_uploads",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		projectId: text("project_id")
+			.notNull()
+			.references(() => projects.id, { onDelete: "cascade" }),
+		videoId: text("video_id")
+			.notNull()
+			.references(() => videos.id, { onDelete: "cascade" }),
+		renderId: text("render_id").notNull(),
+		connectionId: text("connection_id").references(() => youtubeChannels.id, { onDelete: "set null" }),
+		/** Snapshot of the channel, so history reads well after a disconnect. */
+		channelId: text("channel_id").notNull(),
+		channelTitle: text("channel_title").notNull(),
+		status: text("status").$type<YoutubeUploadStatus>().notNull().default("queued"),
+		progress: integer("progress_pct").notNull().default(0),
+		request: text("request", { mode: "json" }).$type<YoutubePublishRequest>().notNull(),
+		youtubeVideoId: text("youtube_video_id"),
+		error: text("error"),
+		/** Optional extras (captions, thumbnail, playlist) that did not work out. The upload itself succeeded. */
+		warnings: text("warnings", { mode: "json" }).$type<string[]>().notNull().default([]),
+		createdAt: createdAt(),
+		startedAt: integer("started_at", { mode: "timestamp_ms" }),
+		finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+	},
+	(t) => [index("youtube_uploads_video_idx").on(t.videoId), index("youtube_uploads_user_idx").on(t.userId)],
 );

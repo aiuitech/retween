@@ -46,6 +46,7 @@ export default defineConfig(({ mode }) => {
 				ASSET_WORKFLOW: bindings.workflow({ name: "retween-asset", worker: WORKER, exportName: "AssetWorkflow" }),
 				PIPELINE_WORKFLOW: bindings.workflow({ name: "retween-pipeline", worker: WORKER, exportName: "PipelineWorkflow" }),
 				RENDER_WORKFLOW: bindings.workflow({ name: "retween-render", worker: WORKER, exportName: "RenderWorkflow" }),
+				PUBLISH_WORKFLOW: bindings.workflow({ name: "retween-publish", worker: WORKER, exportName: "PublishWorkflow" }),
 
 				BETTER_AUTH_SECRET: bindings.secret(),
 				GOOGLE_CLIENT_ID: bindings.secret(),
@@ -58,6 +59,7 @@ export default defineConfig(({ mode }) => {
 				AssetWorkflow: exports.workflow({ name: "retween-asset" }),
 				PipelineWorkflow: exports.workflow({ name: "retween-pipeline" }),
 				RenderWorkflow: exports.workflow({ name: "retween-render" }),
+				PublishWorkflow: exports.workflow({ name: "retween-publish" }),
 			},
 		},
 		containers: dev ? [] : [renderer],

@@ -24,7 +24,7 @@ src/worker/        the Cloudflare Worker
   routes/mcp.ts      ops → MCP tools
   index.ts           ops → REST (POST /api/v1/ops/<name>), auth, uploads, signed file URLs
   workflows/         asset generation, prepare → compose pipeline, container rendering
-  providers/         OpenRouter (images, clips), ElevenLabs (voice, music, sfx), stock sources
+  providers/         OpenRouter (images, clips), ElevenLabs (voice, music, sfx), stock sources, YouTube
   auth/              better-auth: Google, admin, API keys, device flow, OAuth provider for MCP
 src/web/           the web app (React, served as static assets by the Worker)
 cli/               the CLI: builds its commands from GET /api/v1/ops
@@ -36,7 +36,7 @@ An operation added to `src/worker/ops/` appears as an MCP tool, a CLI command an
 
 **Why timing is trustworthy.** Storyboards carry no durations. `video.prepare` generates narration (with word-level timestamps), stills, stock and sound effects first; then sizes clips and music to the voice; only then composes the timeline. Scene lengths, bullet cues, captions and music ducking are all derived from measured audio.
 
-**Infrastructure.** Worker + static assets, D1 (`retween`), R2 (`retween-media`, private; files are served through signed URLs), three Workflows, and a Durable Object-backed Container (`standard-4`, one instance per render, stopped when the render finishes).
+**Infrastructure.** Worker + static assets, D1 (`retween`), R2 (`retween-media`, private; files are served through signed URLs), four Workflows (asset, pipeline, render, publish), and a Durable Object-backed Container (`standard-4`, one instance per render, stopped when the render finishes).
 
 ## Develop
 
@@ -67,7 +67,19 @@ npm run deploy:secrets      # same, and upload secrets from .secrets.production
 
 Secrets (in `.secrets.production`, which is git-ignored): `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENROUTER_API_KEY`, `ELEVENLABS_API_KEY`, and optionally `PEXELS_API_KEY`, `PIXABAY_API_KEY`.
 
-Google OAuth client: authorised redirect URI `https://retween.app/api/auth/callback/google`.
+Google OAuth client: authorised redirect URIs `https://retween.app/api/auth/callback/google` and `https://retween.app/api/youtube/callback` (plus the `http://localhost:5173/…` equivalents for local development).
+
+## YouTube publishing
+
+`youtube.connect` hands the person a link (`/api/youtube/connect`); they pick a channel on Google's consent screen and it appears under Connect → YouTube in the web app. `youtube.publish` sends a finished render to it through the `retween-publish` Workflow: a resumable upload streamed from R2 in 32 MiB chunks, then captions (SRT from the timeline's narration timings), an optional thumbnail and playlist. Credits owed for third-party media are appended to the description. Uploads default to private.
+
+It uses the same Google OAuth client as sign-in, asking separately for the `youtube.force-ssl` scope (needed for captions and playlists; `youtube.upload` alone cannot do those). Refresh tokens are stored AES-GCM-encrypted with a key derived from `BETTER_AUTH_SECRET`. Setup in Google Cloud:
+
+1. Enable the **YouTube Data API v3** on the project that owns the OAuth client.
+2. Add the `…/auth/youtube.force-ssl` scope to the OAuth consent screen and the callback redirect URIs above.
+3. While the consent screen is in testing, only listed test users can connect. Going beyond that needs Google's verification of the sensitive scope.
+
+Quota: uploads have their own allowance of 100 a day per Cloud project. Captions cost 400 units each, and thumbnails and playlist additions 50 each, out of the shared 10,000 units a day.
 
 ## Access
 

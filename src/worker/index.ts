@@ -5,15 +5,18 @@ import { type Actor, actorFromRequest, assertActive, auth } from "./auth/index.t
 import { AppError, badRequest } from "./lib/util.ts";
 import { opsFor, ops, runOp } from "./ops/index.ts";
 import { INLINE_IMAGE, manifestEntry } from "./ops/registry.ts";
+import { YOUTUBE_SCOPE, authorizationUrl, exchangeCode, myChannel } from "./providers/youtube.ts";
 import { handleMcp } from "./routes/mcp.ts";
 import { assetView, createAsset, storeAsset } from "./services/assets.ts";
 import { getProject } from "./services/projects.ts";
 import { contentTypeFor, kindFor, serveObject, verifySignedUrl } from "./services/storage.ts";
 import { budgetStatus } from "./services/usage.ts";
+import { connectState, readConnectState, saveChannel } from "./services/youtube.ts";
 
 export { Renderer } from "./renderer.ts";
 export { AssetWorkflow } from "./workflows/asset.ts";
 export { PipelineWorkflow } from "./workflows/pipeline.ts";
+export { PublishWorkflow } from "./workflows/publish.ts";
 export { RenderWorkflow } from "./workflows/render.ts";
 
 const app = new Hono<{ Variables: { actor: Actor } }>();
@@ -163,6 +166,45 @@ app.put("/api/v1/projects/:projectId/assets", async (c) => {
 	});
 	const stored = await storeAsset(asset, c.req.raw.body, contentType);
 	return c.json({ ok: true, result: { asset: await assetView(stored) } });
+});
+
+// ------------------------------------------------------------ YouTube
+
+/**
+ * Starts connecting a YouTube channel (the link youtube.connect hands out).
+ * It needs the browser's own session, and the OAuth state is bound to that
+ * user, so a link forwarded by someone else cannot attach a channel to their account.
+ */
+app.get("/api/youtube/connect", async (c) => {
+	const actor = await actorFromRequest(c.req.raw);
+	if (!actor || actor.via !== "session") return c.redirect("/connect?youtube=sign-in");
+	if (!actor.approved || actor.banned) return c.redirect("/");
+	return c.redirect(authorizationUrl(await connectState(actor.id)));
+});
+
+app.get("/api/youtube/callback", async (c) => {
+	const back = (params: Record<string, string>) => c.redirect(`/connect?${new URLSearchParams(params)}`);
+	const failed = (reason: string) => back({ youtube: "error", reason });
+	const denied = c.req.query("error");
+	if (denied) return failed(denied === "access_denied" ? "Access was not granted, so nothing was connected." : `Google said: ${denied}`);
+	const userId = await readConnectState(c.req.query("state") ?? "");
+	const actor = await actorFromRequest(c.req.raw);
+	if (!userId || !actor || actor.id !== userId) return failed("This link has expired or was started from another account. Start again from this page.");
+	const code = c.req.query("code");
+	if (!code) return failed("Google did not return an authorisation code.");
+	try {
+		const tokens = await exchangeCode(code);
+		// Google lets people untick individual permissions on the consent screen.
+		if (tokens.scope && !tokens.scope.split(" ").includes(YOUTUBE_SCOPE)) {
+			return failed("YouTube access was unticked on Google's consent screen. Connect again and allow it.");
+		}
+		const channel = await myChannel(tokens.accessToken);
+		await saveChannel(userId, tokens, channel);
+		return back({ youtube: "connected", channel: channel.title });
+	} catch (error) {
+		if (!(error instanceof AppError)) console.error("youtube connect failed", error);
+		return failed(error instanceof AppError ? error.message : "Could not connect the channel. Try again.");
+	}
 });
 
 app.all("/api/*", (c) => c.json({ ok: false, error: { code: "not_found", message: "No such endpoint" } }, 404));

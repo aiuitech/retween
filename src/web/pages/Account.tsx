@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { type Me, authApi, authClient, usd, when } from "../api.ts";
+import { useEffect, useState } from "react";
+import { type Me, authApi, authClient, op, usd, when } from "../api.ts";
 import { Section, Snippet, useLoad } from "../ui.tsx";
 
 interface ApiKey {
@@ -15,6 +15,15 @@ interface SessionRow {
 	userAgent?: string | null;
 	createdAt: string;
 	expiresAt: string;
+}
+interface YoutubeChannelRow {
+	id: string;
+	title: string;
+	handle?: string;
+	url: string;
+	thumbnailUrl?: string;
+	needsReconnect?: boolean;
+	connectedAt: string;
 }
 interface ConsentRow {
 	id: string;
@@ -195,7 +204,9 @@ export function Connect() {
 				))}
 			</Section>
 
-			<Section index="D" title="Connected apps" note="Apps you allowed to use Retween as you. Removing one makes it ask again next time.">
+			<YoutubeSection />
+
+			<Section index="E" title="Connected apps" note="Apps you allowed to use Retween as you. Removing one makes it ask again next time.">
 				<div className="rows">
 					{(consents.data ?? []).length === 0 && <div className="empty">No apps are connected.</div>}
 					{(consents.data ?? []).map((consent) => (
@@ -204,6 +215,60 @@ export function Connect() {
 				</div>
 			</Section>
 		</>
+	);
+}
+
+function YoutubeSection() {
+	const channels = useLoad(() => op<{ channels: YoutubeChannelRow[] }>("youtube.channels").then((result) => result.channels));
+	const query = new URLSearchParams(location.search);
+	const outcome = query.get("youtube");
+	// Arrived from a connect link before signing in: carry on to Google now that there is a session.
+	useEffect(() => {
+		if (outcome === "sign-in") location.replace("/api/youtube/connect");
+	}, [outcome]);
+	return (
+		<Section
+			index="D"
+			title="YouTube"
+			note="Channels your agent can publish finished renders to. Uploads are private unless you ask for unlisted, public or a scheduled time."
+		>
+			{outcome === "connected" && <div className="notice ok">Connected {query.get("channel") ?? "the channel"}.</div>}
+			{outcome === "error" && <div className="notice">{query.get("reason") ?? "The channel was not connected."}</div>}
+			<div className="rows">
+				{channels.data?.length === 0 && <div className="empty">No channels connected.</div>}
+				{(channels.data ?? []).map((channel) => (
+					<div className="row" key={channel.id}>
+						<div className="grow">
+							<div className="title">
+								<a href={channel.url} target="_blank" rel="noreferrer">
+									{channel.title}
+								</a>
+							</div>
+							<div className="faint mono">
+								{channel.handle ? `${channel.handle} · ` : ""}connected {when(channel.connectedAt)}
+							</div>
+						</div>
+						{channel.needsReconnect && (
+							<a className="btn small" href="/api/youtube/connect">
+								Reconnect
+							</a>
+						)}
+						<button
+							type="button"
+							className="btn small ghost danger"
+							onClick={() => op("youtube.disconnect", { channel: channel.id }).then(channels.reload)}
+						>
+							Disconnect
+						</button>
+					</div>
+				))}
+			</div>
+			<p style={{ marginTop: 18 }}>
+				<a className="btn" href="/api/youtube/connect">
+					Connect a channel
+				</a>
+			</p>
+		</Section>
 	);
 }
 
