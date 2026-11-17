@@ -50,6 +50,40 @@ export async function op<T = Record<string, unknown>>(name: string, input: objec
 	return (await read<{ result: T }>(response)).result;
 }
 
+/**
+ * Uploads one file into a project as an asset (the same endpoint the CLI uses).
+ * XHR rather than fetch so the caller can show upload progress.
+ */
+export function uploadAsset(
+	projectId: string,
+	file: File,
+	options: { tags?: string; onProgress?: (fraction: number) => void } = {},
+): Promise<{ id: string; name: string }> {
+	const query = new URLSearchParams({ name: file.name });
+	if (options.tags?.trim()) query.set("tags", options.tags);
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		xhr.open("PUT", `/api/v1/projects/${encodeURIComponent(projectId)}/assets?${query}`);
+		// An empty type (common for fonts) lets the server go by the file extension.
+		xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
+		xhr.upload.onprogress = (event) => event.lengthComputable && options.onProgress?.(event.loaded / event.total);
+		xhr.onload = () => {
+			let body: { ok?: boolean; result?: { asset: { id: string; name: string } }; error?: { message: string; code: string } } | null = null;
+			try {
+				body = JSON.parse(xhr.responseText);
+			} catch {
+				// not JSON, e.g. the platform's own "request too large" page
+			}
+			if (xhr.status >= 200 && xhr.status < 300 && body?.result) return resolve(body.result.asset);
+			const message =
+				body?.error?.message ?? (xhr.status === 413 ? "This file is too large to upload. Try a smaller or more compressed export." : `Upload failed (${xhr.status})`);
+			reject(new ApiError(message, body?.error?.code ?? "error", xhr.status));
+		};
+		xhr.onerror = () => reject(new ApiError("Network error while uploading", "network", 0));
+		xhr.send(file);
+	});
+}
+
 /** Calls a better-auth endpoint that has no typed client method here. */
 export async function authApi<T>(path: string, init?: { method?: "GET" | "POST"; body?: object }): Promise<T> {
 	const response = await fetch(`/api/auth${path}`, {

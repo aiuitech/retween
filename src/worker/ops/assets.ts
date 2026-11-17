@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { and, desc, eq, like, sql } from "drizzle-orm";
 import { z } from "zod";
 import { ASPECT_RATIOS } from "../../../shared/timeline.ts";
@@ -45,6 +46,7 @@ export const assetOps = [
 			tag: z.string().optional().describe("Only assets with this tag"),
 			search: z.string().optional().describe("Match against the name"),
 			includeAuto: z.boolean().default(false),
+			withUrls: z.boolean().default(false).describe("Include a temporary link to each file"),
 			limit: z.number().int().min(1).max(200).default(50),
 		}),
 		readOnly: true,
@@ -61,7 +63,7 @@ export const assetOps = [
 				orderBy: desc(schema.assets.createdAt),
 				limit: input.limit,
 			});
-			return { assets: await Promise.all(rows.map((row) => assetView(row, { url: false }))) };
+			return { assets: await Promise.all(rows.map((row) => assetView(row, { url: input.withUrls }))) };
 		},
 	}),
 
@@ -108,11 +110,30 @@ export const assetOps = [
 	}),
 
 	defineOp({
+		name: "asset.upload_link",
+		title: "Upload link",
+		description:
+			"A link to give the person you are working with so they can upload their own files (logo, photos, footage, voiceover, music, fonts) into a project from their browser. " +
+			"You cannot receive their files directly: send them this link, ask them to say when they are done, then find the new assets with asset.list. " +
+			"From a shell the CLI also uploads: `retween asset upload <file…> --project <id>`.",
+		input: z.object({ projectId }),
+		readOnly: true,
+		handler: async (input, { actor }) => {
+			const project = await getProject(actor, input.projectId);
+			return {
+				url: `${env.APP_URL}/projects/${encodeURIComponent(project.id)}`,
+				accepts: "Images, video, audio and fonts, several at once. The person must be signed in to Retween with the account that owns the project.",
+				afterwards: `asset.list with projectId ${project.id} shows what they uploaded (source "upload").`,
+			};
+		},
+	}),
+
+	defineOp({
 		name: "asset.import_url",
 		title: "Import from URL",
 		description:
 			"Download an image, video, audio or font file from a public URL into the project. " +
-			"To upload a local file use the CLI (`retween asset upload <file> --project <id>`).",
+			"For files the person has on their own device, use asset.upload_link instead.",
 		input: z.object({
 			projectId,
 			url: z.url(),

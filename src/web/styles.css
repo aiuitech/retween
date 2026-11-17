@@ -637,3 +637,111 @@ video.player {
 		transition: none !important;
 	}
 }
+
+/* ------------------------------------------------------- project assets */
+
+.nest {
+	padding-left: 28px;
+	border-left: 1px solid var(--ink);
+	margin: 0 0 18px 6px;
+}
+.label.sub {
+	display: block;
+	padding: 18px 0 8px;
+	border-bottom: 1px solid var(--ink);
+}
+.drop {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+	flex-wrap: wrap;
+	padding: 18px;
+	margin: 12px 0;
+	border: 1px dashed var(--ink-3);
+	background: var(--paper-2);
+	transition:
+		border-color 0.15s,
+		background 0.15s;
+}
+.drop.over {
+	border: 1px solid var(--signal);
+	background: var(--paper);
+	box-shadow: 4px 4px 0 var(--signal);
+}
+.drop .grow {
+	flex: 1 1 260px;
+	min-width: 0;
+}
+.drop .title {
+	font-weight: 500;
+}
+.drop input.tags {
+	width: 180px;
+	font-size: 0.9rem;
+}
+.tiles {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+	gap: 18px;
+	padding: 14px 0 18px;
+	border-bottom: 1px solid var(--rule);
+}
+.tile {
+	margin: 0;
+	min-width: 0;
+}
+.tile .thumb {
+	aspect-ratio: 16 / 10;
+	background: var(--ink);
+	display: grid;
+	place-items: center;
+	overflow: hidden;
+	border: 1px solid var(--ink);
+}
+.tile .thumb img,
+.tile .thumb video {
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	display: block;
+}
+.tile .thumb audio {
+	width: 92%;
+}
+.tile .thumb .faint {
+	color: var(--paper);
+	opacity: 0.6;
+}
+.tile .thumb .glyph {
+	font: 400 2.6rem var(--display);
+	color: var(--paper);
+}
+.tile figcaption {
+	padding-top: 8px;
+	font-size: 0.85rem;
+}
+.tile figcaption .title {
+	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.tile figcaption .faint {
+	font-size: 0.72rem;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+button.link {
+	font: 500 0.66rem var(--mono);
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	background: none;
+	border: 0;
+	padding: 4px 0 0;
+	color: var(--ink-3);
+	cursor: pointer;
+}
+button.link:hover {
+	color: var(--signal);
+}

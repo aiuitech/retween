@@ -125,4 +125,6 @@ export const WORKFLOW_GUIDE = `Retween makes finished videos from a storyboard. 
 4. Run video.prepare. It generates the narration and visuals, then times every scene, bullet and caption to the recorded voice and composes the timeline. Unchanged scenes are not regenerated, so editing one scene and preparing again only pays for that scene.
 5. Run video.render for each aspect ratio and resolution you need (16:9, 9:16, 1:1, 4:5; 480p to 2160p), then render.get for the download link. One timeline renders to every aspect ratio.
 
+Files the person already has (a logo, product shots, footage, a voiceover, a font) are better than anything generated. If they mention one, or a video would clearly benefit from one, give them the link from asset.upload_link: they drop files there and the files appear in project.brief and asset.list.
+
 Costs: images and narration are cheap; generated video clips are expensive and limited to 3-15 seconds, so use them sparingly for moments that need motion, and prefer stills, stock footage and the brand backdrop elsewhere. Call video.credits before publishing: some stock media must be credited.`;

@@ -22,7 +22,8 @@ export function Landing({ signInPage }: { signInPage?: boolean }) {
 						: "Retween is a video studio your agent operates. It keeps your brand, voices the script, finds or generates the pictures, times every scene to the recorded audio and renders it at any size."}
 				</p>
 				<div className="enter">
-					<button type="button" className="btn big" onClick={() => signIn()}>
+					{/* An upload link from an agent (/projects/<id>) should land back on that project after sign-in. */}
+					<button type="button" className="btn big" onClick={() => signIn(location.pathname.startsWith("/projects/") ? location.pathname : undefined)}>
 						Continue with Google <span aria-hidden="true">→</span>
 					</button>
 					<p className="label" style={{ marginTop: 14 }}>
