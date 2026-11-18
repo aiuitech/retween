@@ -2,21 +2,13 @@ import { apiKeyClient } from "@better-auth/api-key/client";
 import { oauthProviderClient } from "@better-auth/oauth-provider/client";
 import { deviceAuthorizationClient } from "better-auth/client/plugins";
 import { createAuthClient } from "better-auth/react";
+import { callOp } from "./rpc.ts";
+
+export type { Me } from "./rpc.ts";
 
 export const authClient = createAuthClient({
 	plugins: [oauthProviderClient(), deviceAuthorizationClient(), apiKeyClient()],
 });
-
-export interface Me {
-	id: string;
-	email: string;
-	name: string;
-	image: string | null;
-	isAdmin: boolean;
-	approved: boolean;
-	banned: boolean;
-	budget: { monthlyBudgetUsd: number; ownLimitUsd?: number; spentThisMonthUsd: number; remainingUsd: number };
-}
 
 export class ApiError extends Error {
 	constructor(
@@ -36,18 +28,11 @@ async function read<T>(response: Response): Promise<T> {
 	return body as T;
 }
 
-export async function fetchMe(): Promise<Me | null> {
-	return (await read<{ user: Me | null }>(await fetch("/api/v1/me"))).user;
-}
-
-/** Runs a service operation: the same operations the CLI and MCP tools use. */
+/** Runs a service operation: the same operations the CLI and MCP tools use. Works while rendering on the server and in the browser. */
 export async function op<T = Record<string, unknown>>(name: string, input: object = {}): Promise<T> {
-	const response = await fetch(`/api/v1/ops/${name}`, {
-		method: "POST",
-		headers: { "content-type": "application/json" },
-		body: JSON.stringify(input),
-	});
-	return (await read<{ result: T }>(response)).result;
+	const reply = await callOp({ data: { name, input: JSON.stringify(input) } });
+	if (!reply.ok) throw new ApiError(reply.message, reply.code, reply.status);
+	return JSON.parse(reply.json) as T;
 }
 
 /** Files above this go up in parts (one Worker request carries at most about 100 MB). */
@@ -156,5 +141,22 @@ export async function authApi<T>(path: string, init?: { method?: "GET" | "POST";
 }
 
 export const usd = (value: number) => `$${value.toFixed(2)}`;
-export const when = (value: string | number | Date | null | undefined) =>
-	value ? new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "";
+
+// Dates are formatted in one fixed locale and in UTC so the server-rendered page and the browser agree.
+const DAY = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const MINUTE = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+type Moment = string | number | Date | null | undefined;
+export const when = (value: Moment) => (value ? DAY.format(new Date(value)) : "");
+export const whenExactly = (value: Moment) => (value ? `${MINUTE.format(new Date(value))} UTC` : "");
+
+export const sizeOf = (bytes?: number | null) =>
+	bytes == null ? "" : bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+
+/** 75.4 → "1:15". */
+export const clock = (seconds?: number | null) => {
+	if (seconds == null) return "";
+	const total = Math.round(seconds);
+	return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+};
+
+export const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;

@@ -25,10 +25,6 @@ export default defineConfig(({ mode }) => {
 			domains: ["retween.app"],
 			workersDev: false,
 			previewUrls: false,
-			assets: {
-				notFoundHandling: "single-page-application",
-				runWorkerFirst: ["/api/*", "/mcp", "/.well-known/*"],
-			},
 			observability: { enabled: true },
 			limits: { cpuMs: 300_000 },
 			// Nightly: charge each account a day of storage (services/metering.ts).

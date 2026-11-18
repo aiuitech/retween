@@ -154,7 +154,7 @@ export const assetOps = [
 				uploadUrl: upload.url,
 				expiresAt: upload.expiresAt.toISOString(),
 				example: `curl -T logo.png "${upload.url}&name=logo.png&tags=logo"`,
-				pageUrl: `${env.APP_URL}/projects/${encodeURIComponent(project.id)}`,
+				pageUrl: `${env.APP_URL}/projects/${encodeURIComponent(project.id)}/assets`,
 				accepts: "Images, video, audio and fonts. Name each file with its extension so its type is clear.",
 				multipart: multipartHelp(upload.url),
 			};

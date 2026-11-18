@@ -1,0 +1,335 @@
+import { Link, createFileRoute, getRouteApi, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
+import { clock, op, plural, sizeOf, when } from "../../../../../../api.ts";
+import { DeleteRender, DeleteVideo, ExportDialog, UploadLine, VideoDialog } from "../../../../../../forms.tsx";
+import type { RenderRow, Scene, VideoDetail, YoutubeUpload } from "../../../../../../types.ts";
+import { CopyId, Crumbs, Empty, Menu, Status, StatusOf, Tween, isRunning, useAct, usePoll } from "../../../../../../ui.tsx";
+
+const project = getRouteApi("/_app/projects/$projectId");
+const video = getRouteApi("/_app/projects/$projectId/videos/$videoId");
+
+export const Route = createFileRoute("/_app/projects/$projectId/videos/$videoId/")({
+	loader: async ({ params }) => {
+		const [renders, uploads] = await Promise.all([
+			op<{ renders: RenderRow[] }>("render.list", { videoId: params.videoId }),
+			op<{ uploads: YoutubeUpload[] }>("youtube.list", { videoId: params.videoId }).catch(() => ({ uploads: [] })),
+		]);
+		return { renders: renders.renders, uploads: uploads.uploads };
+	},
+	component: VideoPage,
+});
+
+function VideoPage() {
+	const { project: parent } = project.useLoaderData();
+	const { video: current } = video.useLoaderData();
+	const { renders, uploads } = Route.useLoaderData();
+	const navigate = useNavigate();
+	const { busy, act } = useAct();
+	const [dialog, setDialog] = useState<"edit" | "delete" | "export" | null>(null);
+	const [removing, setRemoving] = useState<RenderRow | null>(null);
+	const params = { projectId: parent.id, videoId: current.id };
+	const preparing = current.status === "preparing";
+	usePoll(preparing || renders.some((render) => isRunning(render.status)) || uploads.some((upload) => isRunning(upload.status)));
+
+	const { pipeline } = current;
+	const scenes = current.storyboard.scenes;
+	return (
+		<main className="page">
+			<Crumbs>
+				<li>
+					<Link to="/projects">Projects</Link>
+				</li>
+				<li>
+					<Link to="/projects/$projectId" params={params}>
+						{parent.name}
+					</Link>
+				</li>
+				<li aria-current="page">{current.title}</li>
+			</Crumbs>
+			<div className="head">
+				<div className="words">
+					<h1>{current.title}</h1>
+					<div className="facts">
+						<StatusOf status={current.status} />
+						<span>{current.aspect}</span>
+						<span>{plural(scenes.length, "scene")}</span>
+						{current.timeline && <span>{clock(current.timeline.durationSec)}</span>}
+						<span>Updated {when(current.updatedAt)}</span>
+					</div>
+					{current.brief && <p>{current.brief}</p>}
+				</div>
+				<div className="acts">
+					<button type="button" className="btn" disabled={preparing || scenes.length === 0} onClick={() => setDialog("export")}>
+						Export video
+					</button>
+					<Menu label="More actions for this video">
+						<button type="button" onClick={() => setDialog("edit")}>
+							Edit title and brief
+						</button>
+						<hr />
+						<button type="button" className="danger" onClick={() => setDialog("delete")}>
+							Delete video
+						</button>
+					</Menu>
+				</div>
+			</div>
+
+			{preparing && (
+				<div className="note info" style={{ marginTop: 22 }}>
+					<div className="progress">
+						<span>{pipeline.message ?? "Generating narration and pictures"}</span>
+						<Tween value={pipeline.total ? (pipeline.completed ?? 0) / pipeline.total : undefined} label="Preparing the video" />
+						{pipeline.total ? (
+							<span className="num">
+								{pipeline.completed ?? 0} of {pipeline.total}
+							</span>
+						) : null}
+					</div>
+				</div>
+			)}
+			{current.status === "failed" && pipeline.error && (
+				<p className="note bad" style={{ marginTop: 22 }}>
+					Preparing stopped: {pipeline.error} Ask your agent to fix the scene and prepare again; scenes that already worked are not redone.
+				</p>
+			)}
+			{current.timeline?.stale && !preparing && (
+				<p className="note" style={{ marginTop: 22 }}>
+					The storyboard or brand changed after these timings were worked out. The next export recomposes them first.
+				</p>
+			)}
+
+			<div className="block">
+				<div className="block-head">
+					<div>
+						<h2>Storyboard</h2>
+						<p>Written and revised by your agent. Each scene lasts as long as its narration takes to say.</p>
+					</div>
+					<CopyId id={current.id} />
+				</div>
+				{scenes.length === 0 ? (
+					<Empty title="No scenes yet">Tell your agent what this video should say and show. It writes the storyboard, and the scenes appear here.</Empty>
+				) : (
+					<Storyboard video={current} />
+				)}
+			</div>
+
+			<div className="block">
+				<div className="block-head">
+					<div>
+						<h2>Exports</h2>
+						<p>Finished files, one per shape and size. Links to a file last a day; open the export again for a fresh one.</p>
+					</div>
+				</div>
+				{renders.length === 0 ? (
+					<Empty
+						title="Not exported yet"
+						actions={
+							scenes.length > 0 && !preparing ? (
+								<button type="button" className="btn" onClick={() => setDialog("export")}>
+									Export video
+								</button>
+							) : undefined
+						}
+					>
+						{current.status === "ready" ? "The video is prepared. Export it in any shape, up to 4K." : "Once the video is prepared, it can be exported in any shape, up to 4K."}
+					</Empty>
+				) : (
+					<div className="lines">
+						{renders.map((render) => (
+							<div className="line go" key={render.id}>
+								<div className="grow">
+									<Link className="cover title num" to="/projects/$projectId/videos/$videoId/renders/$renderId" params={{ ...params, renderId: render.id }}>
+										{render.aspect} at {render.resolution}
+									</Link>
+									<div className="facts">
+										<span>{when(render.createdAt)}</span>
+										{render.durationSec ? <span>{clock(render.durationSec)}</span> : null}
+										{render.bytes ? <span>{sizeOf(render.bytes)}</span> : null}
+										{render.warnings?.length ? <Status tone="warn">{plural(render.warnings.length, "warning")}</Status> : null}
+										{render.error && <span style={{ color: "var(--red)" }}>{render.error}</span>}
+									</div>
+								</div>
+								{render.status === "rendering" ? (
+									<div className="progress" style={{ width: 200 }}>
+										<Tween value={render.progress / 100} label={`Rendering ${render.aspect} ${render.resolution}`} />
+										<span className="pct">{render.progress}%</span>
+									</div>
+								) : (
+									<StatusOf status={render.status} />
+								)}
+								<div className="acts">
+									{render.downloadUrl && (
+										<a className="btn quiet small" href={render.downloadUrl}>
+											Download
+										</a>
+									)}
+									<Menu label={`Actions for the ${render.aspect} ${render.resolution} export`}>
+										{isRunning(render.status) && (
+											<button type="button" disabled={busy} onClick={() => void act(() => op("render.cancel", { renderId: render.id }), "Cancelled export")}>
+												Cancel export
+											</button>
+										)}
+										<button type="button" className="danger" onClick={() => setRemoving(render)}>
+											Delete export
+										</button>
+									</Menu>
+								</div>
+							</div>
+						))}
+					</div>
+				)}
+			</div>
+
+			{uploads.length > 0 && (
+				<div className="block">
+					<div className="block-head">
+						<h2>On YouTube</h2>
+					</div>
+					<div className="lines">
+						{uploads.map((upload) => (
+							<UploadLine key={upload.id} upload={upload} />
+						))}
+					</div>
+				</div>
+			)}
+
+			<VideoDialog open={dialog === "edit"} onClose={() => setDialog(null)} projectId={parent.id} video={current} />
+			<ExportDialog open={dialog === "export"} onClose={() => setDialog(null)} video={current} />
+			<DeleteVideo open={dialog === "delete"} onClose={() => setDialog(null)} video={current} onDeleted={() => navigate({ to: "/projects/$projectId", params })} />
+			{removing && <DeleteRender open onClose={() => setRemoving(null)} render={removing} />}
+		</main>
+	);
+}
+
+/** What a scene puts on screen, in a line. */
+function shown(scene: Scene): string {
+	const text = scene.text ?? {};
+	return (
+		text.heading ??
+		text.quote ??
+		(text.stat ? [text.stat.value, text.stat.label].filter(Boolean).join(" ") : undefined) ??
+		text.bullets?.map((bullet) => bullet.text).join(", ") ??
+		text.cta?.text ??
+		scene.chart?.title ??
+		scene.map?.places?.map((place) => place.name).filter(Boolean).join(" to ") ??
+		text.body ??
+		scene.label ??
+		""
+	);
+}
+
+/** Where a scene's picture comes from. */
+function picture(scene: Scene): string {
+	if (scene.footage) return scene.footage.show === "voice" ? "Your recording, as voice" : "Your recording";
+	if (scene.type === "chart") return "Animated chart";
+	if (scene.type === "map") return "Animated map";
+	const visual = scene.visual;
+	if (!visual) return "Brand backdrop";
+	const about = visual.prompt ?? visual.query;
+	const kind: Record<string, string> = { image: "Generated still", vector: "Illustration", video: "Generated clip", stock: "Stock", asset: "A file from the project", solid: "Solid colour", gradient: "Gradient", brand: "Brand backdrop" };
+	return `${kind[visual.source] ?? visual.source}${about ? `: ${about}` : ""}`;
+}
+
+const typeName = (scene: Scene) => scene.type.charAt(0).toUpperCase() + scene.type.slice(1);
+
+const cut = (text: string, length: number) => (text.length > length ? `${text.slice(0, length).trimEnd()}…` : text);
+
+/**
+ * The storyboard as an exposure sheet: a track with every scene drawn as wide
+ * as it is long, and a row per scene beneath. Hovering either lights up the other.
+ */
+function Storyboard({ video: current }: { video: VideoDetail }) {
+	const [lit, setLit] = useState<string | null>(null);
+	const scenes = current.storyboard.scenes;
+	const timed = new Map(current.timeline?.scenes.map((scene) => [scene.id, scene]));
+	const media = new Map(current.media.scenes.map((scene) => [scene.id, scene]));
+	const total = current.timeline?.durationSec;
+	// Before the voice is recorded there are no timings: every scene gets the same width.
+	const length = (id: string) => timed.get(id)?.durationSec ?? (total ? 0 : 1);
+	const sum = scenes.reduce((all, scene) => all + length(scene.id), 0) || 1;
+	let run = 0;
+	const edges = scenes.map((scene) => {
+		const at = run;
+		run += length(scene.id);
+		return at / sum;
+	});
+
+	const state = (id: string) => {
+		const parts = [media.get(id)?.narration, media.get(id)?.visual, media.get(id)?.cutout].filter((part) => part !== undefined);
+		if (parts.some((part) => part.status === "failed")) return "failed";
+		if (parts.some((part) => part.status === "pending")) return "pending";
+		if (parts.some((part) => part.status === "missing")) return "missing";
+		return "ready";
+	};
+
+	return (
+		<div className="cel">
+			<div className="track">
+				{scenes.map((scene, i) => (
+					<a
+						key={scene.id}
+						href={`#scene-${scene.id}`}
+						className={lit === scene.id ? "lit" : ""}
+						style={{ ["--len" as string]: length(scene.id) }}
+						title={`Scene ${i + 1}: ${shown(scene) || scene.type}`}
+						onMouseEnter={() => setLit(scene.id)}
+						onMouseLeave={() => setLit(null)}
+						onFocus={() => setLit(scene.id)}
+						onBlur={() => setLit(null)}
+					>
+						{i + 1} {typeName(scene)}
+					</a>
+				))}
+			</div>
+			<div className="track-keys" aria-hidden="true">
+				{edges.map((edge) => (
+					<b key={edge} style={{ left: `${edge * 100}%` }} />
+				))}
+				<b className="end" style={{ left: "100%" }} />
+			</div>
+			<div className="ruler" aria-hidden="true">
+				<span style={{ left: 0 }}>0:00</span>
+				<span style={{ left: "100%" }}>{total ? clock(total) : "Timed once the voice is recorded"}</span>
+			</div>
+			<div className="sheet-scroll">
+				<table className="xsheet" style={{ marginTop: 10 }}>
+					<thead>
+						<tr>
+							<th className="n">
+								<span className="hide">Scene</span>
+							</th>
+							<th>On screen</th>
+							<th>Narration</th>
+							<th>Picture</th>
+							<th>Starts</th>
+							<th>Lasts</th>
+							<th>Media</th>
+						</tr>
+					</thead>
+					<tbody>
+						{scenes.map((scene, i) => {
+							const timing = timed.get(scene.id);
+							const said = scene.narration ?? (scene.footage ? `“${scene.footage.from ?? ""} … ${scene.footage.to ?? ""}”` : "");
+							return (
+								<tr key={scene.id} id={`scene-${scene.id}`} className={lit === scene.id ? "lit" : ""} onMouseEnter={() => setLit(scene.id)} onMouseLeave={() => setLit(null)}>
+									<td className="n">{i + 1}</td>
+									<td className="shown">
+										{shown(scene) && <strong>{cut(shown(scene), 90)}</strong>}
+										<div className="softer">{typeName(scene)}</div>
+									</td>
+									<td className="said">{said ? cut(said, 260) : <span className="softer">No narration</span>}</td>
+									<td className="soft shown">{cut(picture(scene), 110)}</td>
+									<td className="t">{timing ? clock(timing.startSec) : ""}</td>
+									<td className="t">{timing ? `${timing.durationSec.toFixed(1)}s` : ""}</td>
+									<td className="state">
+										<StatusOf status={state(scene.id)} />
+									</td>
+								</tr>
+							);
+						})}
+					</tbody>
+				</table>
+			</div>
+		</div>
+	);
+}

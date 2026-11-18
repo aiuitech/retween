@@ -19,6 +19,8 @@ export interface AuthSettings {
 	/** Spending cap given to newly created users, in cents per calendar month. */
 	defaultMonthlyBudgetCents: number;
 	database: BetterAuthOptions["database"];
+	/** Runs before a person deletes their own account: refuse by throwing, and remove what the database does not cascade to. */
+	beforeDeleteUser: (user: { id: string; email: string }) => Promise<void>;
 	waitUntil?: (promise: Promise<unknown>) => void;
 }
 
@@ -59,6 +61,9 @@ export function authOptions(settings: AuthSettings) {
 			},
 		},
 		user: {
+			// People can close their own account from the web app. Sign-in is by Google only, so there is no password to re-enter:
+			// the session has to be recent instead (better-auth's default "fresh" window).
+			deleteUser: { enabled: true, beforeDelete: (user) => settings.beforeDeleteUser(user) },
 			additionalFields: {
 				/** Only approved users can use the service. Set by an admin. */
 				approved: { type: "boolean", required: false, defaultValue: false, input: false },

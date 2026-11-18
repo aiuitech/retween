@@ -1,5 +1,6 @@
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider";
 import { env } from "cloudflare:workers";
+import start from "@tanstack/react-start/server-entry";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type Actor, actorById, actorFromRequest, assertActive, auth } from "./auth/index.ts";
@@ -278,6 +279,9 @@ app.get("/api/youtube/callback", async (c) => {
 });
 
 app.all("/api/*", (c) => c.json({ ok: false, error: { code: "not_found", message: "No such endpoint" } }, 404));
+
+// Everything else is the web app: pages and its server functions (src/web).
+app.all("*", (c) => start.fetch(c.req.raw));
 
 export default {
 	fetch: app.fetch,

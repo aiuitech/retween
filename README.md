@@ -30,7 +30,7 @@ src/worker/        the Cloudflare Worker
   workflows/         asset generation, prepare → compose pipeline, container rendering
   providers/         OpenRouter (images, clips), ElevenLabs (voice, music, sfx), stock sources, YouTube
   auth/              better-auth: Google, admin, API keys, device flow, OAuth provider for MCP
-src/web/           the web app (React, served as static assets by the Worker)
+src/web/           the web app (TanStack Start: pages in routes/, rendered by the Worker)
 cli/               the CLI: builds its commands from GET /api/v1/ops
 renderer/          Remotion + headless Chrome behind a small HTTP server (the container image)
 migrations/        D1 schema

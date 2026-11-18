@@ -1,9 +1,11 @@
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";
 import { betterAuth } from "better-auth";
+import { APIError } from "better-auth/api";
 import { env, waitUntil } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client.ts";
 import { AppError, forbidden } from "../lib/util.ts";
+import { deletePrefix } from "../services/storage.ts";
 import { API_KEY_PREFIX, authOptions } from "./options.ts";
 
 export const superuserEmails = env.SUPERUSER_EMAILS.split(",")
@@ -20,6 +22,15 @@ export const auth = betterAuth(
 		defaultMonthlyBudgetCents: Number(env.DEFAULT_MONTHLY_BUDGET_CENTS) || 0,
 		database: drizzleAdapter(db, { provider: "sqlite", schema }),
 		waitUntil,
+		beforeDeleteUser: async (user) => {
+			if (superuserEmails.includes(user.email.toLowerCase())) {
+				throw new APIError("BAD_REQUEST", { message: "This account is a configured superuser and cannot be deleted." });
+			}
+			// The same clean-up as admin.user_delete: stored files and API keys are not reached by the database's cascades.
+			const projects = await db.query.projects.findMany({ where: eq(schema.projects.ownerId, user.id) });
+			for (const project of projects) await deletePrefix(`projects/${project.id}/`);
+			await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, user.id));
+		},
 	}),
 );
 

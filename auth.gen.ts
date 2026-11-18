@@ -16,5 +16,6 @@ export const auth = betterAuth(
 		superuserEmails: [],
 		defaultMonthlyBudgetCents: 0,
 		database: drizzleAdapter({} as never, { provider: "sqlite" }),
+		beforeDeleteUser: async () => undefined,
 	}),
 );
