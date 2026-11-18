@@ -3,8 +3,10 @@ import { and, eq, ne } from "drizzle-orm";
 import { z } from "zod";
 import { db, schema } from "../db/client.ts";
 import { YOUTUBE_PRIVACY, type YoutubePublishRequest } from "../db/schema.ts";
-import { AppError, badRequest, newId } from "../lib/util.ts";
-import { revokeToken, videoStatus } from "../providers/youtube.ts";
+import { AppError, badRequest, newId, notFound } from "../lib/util.ts";
+import { ANALYTICS_SCOPE, retention, revokeToken, videoStatus } from "../providers/youtube.ts";
+import { sceneRetention, worstScenes } from "../../../shared/retention.ts";
+import { sceneSummary } from "../services/reviews.ts";
 import { assetsById } from "../services/assets.ts";
 import { chapterBlock, chaptersFor } from "../../../shared/publish.ts";
 import { preflight } from "../services/publish.ts";
@@ -255,6 +257,63 @@ export const youtubeOps = [
 				}
 			}
 			return { upload: uploadView(upload), ...(youtube ? { youtube } : {}) };
+		},
+	}),
+
+	defineOp({
+		name: "youtube.retention",
+		title: "Where viewers left",
+		description:
+			"YouTube's audience retention for an uploaded video, laid over its scenes: the share of viewers still watching at the start and end of each scene, " +
+			"how fast each scene lost them, how it compares with similar videos, and the scenes that lost people fastest. " +
+			"Use it to learn what to change next time, and pass saveLearning to keep the lesson as a pinned project note so future videos follow it. " +
+			"Data appears a day or two after views come in. Needs the channel connected with analytics access (connect again if it was connected before).",
+		input: z.object({
+			uploadId: z.string().describe("ytu_… from youtube.publish or youtube.list"),
+			saveLearning: z.boolean().default(false).describe("Save what the numbers say as a pinned learning note in the project"),
+		}),
+		readOnly: false,
+		handler: async (input, { actor }) => {
+			const upload = await getUpload(actor, input.uploadId);
+			if (!upload.youtubeVideoId) throw new AppError(409, "This upload has not finished, so there is nothing to measure yet.", "not_ready");
+			const connection = upload.connectionId ? await db.query.youtubeChannels.findFirst({ where: eq(schema.youtubeChannels.id, upload.connectionId) }) : undefined;
+			if (!connection) throw new AppError(409, "The channel this went to is no longer connected. Connect it again with youtube.connect.", "youtube_reconnect");
+			if (connection.scope && !connection.scope.split(" ").includes(ANALYTICS_SCOPE)) {
+				throw new AppError(409, "This channel was connected without analytics access. Connect it again with youtube.connect and allow YouTube Analytics.", "youtube_analytics_scope");
+			}
+			const render = await db.query.renders.findFirst({ where: eq(schema.renders.id, upload.renderId) });
+			if (!render) throw notFound("The export that was uploaded");
+			const data = await retention(await accessTokenFor(connection), upload.youtubeVideoId, upload.finishedAt ?? upload.createdAt);
+			if (!data.curve.length) {
+				return { views: data.views, note: "YouTube has no retention data for this video yet. It usually appears a day or two after the first views." };
+			}
+			const { video } = await getVideo(actor, upload.videoId);
+			const board = new Map(video.storyboard.scenes.map((scene) => [scene.id, scene]));
+			const scenes = sceneRetention(render.timeline, data.curve).map((scene) => ({ ...scene, summary: sceneSummary(board.get(scene.id)) }));
+			const worst = worstScenes(scenes) as typeof scenes;
+			const opening = scenes[0];
+			const lines = [
+				`${data.views} views; viewers watched ${Math.round(data.averageViewPercent)}% on average (${Math.round(data.averageViewSec)}s).`,
+				opening ? `The opening (${opening.summary}) kept ${Math.round(opening.end * 100)}% of viewers to ${opening.endSec}s.` : "",
+				...worst.map((scene) => `Scene ${scene.n} (${scene.summary}, ${scene.startSec}-${scene.endSec}s) lost ${Math.round(scene.lossPer10s * 100)} points per 10s${scene.relative !== undefined ? `, ${scene.relative < 0.5 ? "worse" : "better"} than similar videos` : ""}.`),
+			].filter(Boolean);
+			let noteId: string | undefined;
+			if (input.saveLearning) {
+				const [note] = await db
+					.insert(schema.notes)
+					.values({ id: newId("nte"), projectId: upload.projectId, kind: "learning", title: `Retention: ${video.title}`.slice(0, 200), body: lines.join("\n"), pinned: true })
+					.returning();
+				noteId = note!.id;
+			}
+			return {
+				views: data.views,
+				averageViewPercent: Math.round(data.averageViewPercent * 10) / 10,
+				averageViewSec: Math.round(data.averageViewSec),
+				scenes,
+				worst: worst.map((scene) => scene.id),
+				summary: lines,
+				...(noteId ? { noteId, note: "Saved as a pinned learning note: it is in the project brief from now on." } : {}),
+			};
 		},
 	}),
 

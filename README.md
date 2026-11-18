@@ -108,8 +108,8 @@ Google OAuth client: authorised redirect URIs `https://retween.app/api/auth/call
 
 It uses the same Google OAuth client as sign-in, asking separately for the `youtube.force-ssl` scope (needed for captions and playlists; `youtube.upload` alone cannot do those). Refresh tokens are stored AES-GCM-encrypted with a key derived from `BETTER_AUTH_SECRET`. Setup in Google Cloud:
 
-1. Enable the **YouTube Data API v3** on the project that owns the OAuth client.
-2. Add the `…/auth/youtube.force-ssl` scope to the OAuth consent screen and the callback redirect URIs above.
+1. Enable the **YouTube Data API v3** and the **YouTube Analytics API** on the project that owns the OAuth client.
+2. Add the `…/auth/youtube.force-ssl` and `…/auth/yt-analytics.readonly` scopes to the OAuth consent screen, and the callback redirect URIs above. Analytics is optional for the person: a channel connected without it publishes as before, and `youtube.retention` asks them to connect again.
 3. While the consent screen is in testing, only listed test users can connect. Going beyond that needs Google's verification of the sensitive scope.
 
 Quota: uploads have their own allowance of 100 a day per Cloud project. Captions cost 400 units each, and thumbnails and playlist additions 50 each, out of the shared 10,000 units a day.

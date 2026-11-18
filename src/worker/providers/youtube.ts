@@ -13,6 +13,8 @@ import { env } from "cloudflare:workers";
 import { AppError } from "../lib/util.ts";
 
 export const YOUTUBE_SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl";
+/** Read-only YouTube Analytics: where viewers stop watching each uploaded video. Optional; channels connected without it can still publish. */
+export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly";
 const API = "https://www.googleapis.com/youtube/v3";
 const UPLOAD_API = "https://www.googleapis.com/upload/youtube/v3";
 
@@ -24,7 +26,7 @@ export function authorizationUrl(state: string): string {
 		client_id: env.GOOGLE_CLIENT_ID,
 		redirect_uri: redirectUri(),
 		response_type: "code",
-		scope: YOUTUBE_SCOPE,
+		scope: `${YOUTUBE_SCOPE} ${ANALYTICS_SCOPE}`,
 		access_type: "offline",
 		prompt: "consent select_account",
 		state,
@@ -275,4 +277,36 @@ export async function videoStatus(accessToken: string, videoId: string): Promise
 	const item = json.items?.[0];
 	if (!item) return null;
 	return { ...item.status, processingStatus: item.processingDetails?.processingStatus };
+}
+
+// --- analytics -------------------------------------------------------------------------
+
+const ANALYTICS_API = "https://youtubeanalytics.googleapis.com/v2/reports";
+
+/** YYYY-MM-DD in UTC. */
+const day = (date: Date) => date.toISOString().slice(0, 10);
+
+/**
+ * The audience-retention curve of one video (about 100 points from start to
+ * end) and its headline numbers since it went up. Empty until YouTube has
+ * processed some views, usually a day or two.
+ */
+export async function retention(accessToken: string, videoId: string, since: Date) {
+	const base = { ids: "channel==MINE", startDate: day(since), endDate: day(new Date()), filters: `video==${videoId}` };
+	const [curve, totals] = await Promise.all([
+		fetch(`${ANALYTICS_API}?${new URLSearchParams({ ...base, metrics: "audienceWatchRatio,relativeRetentionPerformance", dimensions: "elapsedVideoTimeRatio" })}`, { headers: bearer(accessToken) }),
+		fetch(`${ANALYTICS_API}?${new URLSearchParams({ ...base, metrics: "views,averageViewDuration,averageViewPercentage" })}`, { headers: bearer(accessToken) }),
+	]);
+	if (curve.status === 403) throw new AppError(409, "This channel was connected before Retween could read analytics. Connect it again with youtube.connect and allow YouTube Analytics.", "youtube_analytics_scope");
+	if (!curve.ok) throw await youtubeError(curve);
+	if (!totals.ok) throw await youtubeError(totals);
+	const points = (await curve.json()) as { rows?: [number, number, number][] };
+	const summary = (await totals.json()) as { rows?: [number, number, number][] };
+	const [views, averageViewDuration, averageViewPercentage] = summary.rows?.[0] ?? [0, 0, 0];
+	return {
+		curve: (points.rows ?? []).map(([at, watching, relative]) => ({ at, watching, relative })),
+		views,
+		averageViewSec: averageViewDuration,
+		averageViewPercent: averageViewPercentage,
+	};
 }
