@@ -23,10 +23,12 @@ export const ThumbnailOverlay: React.FC<{ overlay: Overlay; name: string }> = ({
 	const accent = pickReadable("#101014", 3, theme.colors.accent, theme.colors.primary, "#FFD43B");
 	const highlight = new Set((overlay.highlight ?? []).flatMap((phrase) => phrase.split(/\s+/)).map(clean).filter(Boolean));
 
-	// The text takes the side away from the subject; a centred subject pushes it up or down.
+	// Text on a side stays in that half, whether or not there is a subject, so the
+	// other half of the picture is left clear; the FitBox shrinks it to fit there.
+	// Only centred text spans the width (a centred subject pushes it up or down).
 	const padX = W * 0.055;
 	const padY = H * 0.08;
-	const textW = subject && subject.side !== "center" && textSide !== "center" ? W * 0.56 : W * 0.86;
+	const textW = textSide === "center" ? W * 0.86 : W * 0.5 - padX;
 	const textX = textSide === "left" ? padX : textSide === "right" ? W - padX - textW : (W - textW) / 2;
 	// The bottom-right corner is covered by the duration badge in every feed.
 	const bottomPad = textX + textW > W * 0.8 ? H * 0.17 : padY;

@@ -49,7 +49,9 @@ export const ThumbnailDesign = z.object({
 	headline: z.string().max(80).optional().describe("The words on the thumbnail. Two to five words read at feed size; it should add to the title, not repeat it"),
 	kicker: z.string().max(40).optional().describe("A small label above the headline, e.g. NEW or PART 2"),
 	highlight: z.array(z.string().max(40)).max(8).optional().describe("Words of the headline to draw in the accent colour"),
-	textSide: z.enum(["left", "center", "right"]).optional().describe("Where the headline sits (default: opposite the subject, else left)"),
+	textSide: z.enum(["left", "center", "right"]).optional().describe(
+			"Where the headline sits (default: opposite the subject, else left). left and right keep it inside that half of the thumbnail, leaving the other half clear, and shrink it to fit there; center spans the width",
+		),
 	textPosition: z.enum(["top", "center", "bottom"]).optional().describe("Default center"),
 	subject: z
 		.object({
@@ -156,7 +158,7 @@ export function thumbnailNotes(design: ThumbnailDesign, title: string, scale = 1
 			severity: "warning",
 			kind: "headline-too-small",
 			message: `The headline had to shrink to ${Math.round(scale * 100)}% to fit, so it is about ${px}px tall in the up-next column: too small to read.`,
-			fix: "Use fewer words, or give the text more room (textSide center, or a smaller subject).",
+			fix: "Use fewer words, or give the text the full width with textSide center.",
 		});
 	}
 
