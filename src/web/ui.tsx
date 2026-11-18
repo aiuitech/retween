@@ -1,5 +1,5 @@
 import { Link, useRouter } from "@tanstack/react-router";
-import { type ReactNode, createContext, useCallback, useContext, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 
 /** The mark: two keys and the in-betweens, spaced the way an animator eases them. */
 export function Mark({ size = 26 }: { size?: number }) {
@@ -235,6 +235,8 @@ export function usePoll(active: boolean, everyMs = 3000) {
 export function Menu({ label, trigger, className = "btn quiet small icon", children }: { label: string; trigger?: ReactNode; className?: string; children: ReactNode }) {
 	const [open, setOpen] = useState(false);
 	const root = useRef<HTMLDivElement>(null);
+	const button = useRef<HTMLButtonElement>(null);
+	const panel = useRef<HTMLDivElement>(null);
 	useEffect(() => {
 		if (!open) return;
 		const away = (event: PointerEvent) => !root.current?.contains(event.target as Node) && setOpen(false);
@@ -246,9 +248,44 @@ export function Menu({ label, trigger, className = "btn quiet small icon", child
 			document.removeEventListener("keydown", escape);
 		};
 	}, [open]);
+	// The panel sits in the browser's top layer, so cards that clip their overflow (and open dialogs) can't hide it.
+	// It is placed under the button, right-aligned, and flips above when there's no room below.
+	useLayoutEffect(() => {
+		const el = panel.current;
+		if (!open || !el) return;
+		if (!el.matches(":popover-open")) el.showPopover?.();
+		const place = () => {
+			const anchor = button.current?.getBoundingClientRect();
+			if (!anchor) return;
+			const gap = 6;
+			const edge = 8;
+			const { width, height } = el.getBoundingClientRect();
+			const below = anchor.bottom + gap + height <= window.innerHeight - edge || anchor.top - gap - height < edge;
+			const top = below ? anchor.bottom + gap : anchor.top - gap - height;
+			const left = Math.min(Math.max(edge, anchor.right - width), window.innerWidth - width - edge);
+			el.style.top = `${Math.round(top)}px`;
+			el.style.left = `${Math.round(left)}px`;
+		};
+		place();
+		window.addEventListener("resize", place);
+		window.addEventListener("scroll", place, true);
+		return () => {
+			window.removeEventListener("resize", place);
+			window.removeEventListener("scroll", place, true);
+		};
+	}, [open]);
 	return (
 		<div className="menu" ref={root}>
-			<button type="button" className={className} aria-haspopup="menu" aria-expanded={open} aria-label={trigger ? label : undefined} title={trigger ? undefined : label} onClick={() => setOpen(!open)}>
+			<button
+				ref={button}
+				type="button"
+				className={className}
+				aria-haspopup="menu"
+				aria-expanded={open}
+				aria-label={trigger ? label : undefined}
+				title={trigger ? undefined : label}
+				onClick={() => setOpen(!open)}
+			>
 				{trigger ?? (
 					<>
 						<span aria-hidden="true">•••</span>
@@ -259,6 +296,8 @@ export function Menu({ label, trigger, className = "btn quiet small icon", child
 			{open && (
 				// biome-ignore lint/a11y/useKeyWithClickEvents: choosing an item closes the menu; the items themselves are the controls
 				<div
+					ref={panel}
+					popover="manual"
 					className="menu-panel"
 					role="menu"
 					onClick={(event) => {
