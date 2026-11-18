@@ -313,7 +313,22 @@ export function Menu({ label, trigger, className = "btn quiet small icon", child
 
 // ---------------------------------------------------------------- dialogs
 
-export function Dialog({ open, onClose, title, wide, children }: { open: boolean; onClose: () => void; title: string; wide?: boolean; children: ReactNode }) {
+export function Dialog({
+	open,
+	onClose,
+	title,
+	wide,
+	guard,
+	children,
+}: {
+	open: boolean;
+	onClose: () => void;
+	title: string;
+	wide?: boolean;
+	/** Asked before closing by Escape, the × or a click outside; return false to stay open (unsaved work). */
+	guard?: () => boolean;
+	children: ReactNode;
+}) {
 	const ref = useRef<HTMLDialogElement>(null);
 	const heading = useId();
 	useEffect(() => {
@@ -323,6 +338,7 @@ export function Dialog({ open, onClose, title, wide, children }: { open: boolean
 		if (!open && dialog.open) dialog.close();
 	}, [open]);
 	if (!open) return null;
+	const leave = () => (!guard || guard()) && onClose();
 	return (
 		// biome-ignore lint/a11y/useKeyWithClickEvents: Escape is handled by the dialog element itself
 		<dialog
@@ -330,11 +346,14 @@ export function Dialog({ open, onClose, title, wide, children }: { open: boolean
 			className={`sheet${wide ? " wide" : ""}`}
 			aria-labelledby={heading}
 			onClose={onClose}
-			onClick={(event) => event.target === ref.current && onClose()}
+			onCancel={(event) => {
+				if (guard && !guard()) event.preventDefault();
+			}}
+			onClick={(event) => event.target === ref.current && leave()}
 		>
 			<div className="sheet-head">
 				<h2 id={heading}>{title}</h2>
-				<button type="button" className="close" aria-label="Close" onClick={onClose}>
+				<button type="button" className="close" aria-label="Close" onClick={leave}>
 					×
 				</button>
 			</div>

@@ -27,29 +27,14 @@ export interface VideoRow {
 
 interface MediaState {
 	status: string;
+	assetId?: string;
+	kind?: string;
 	error?: string;
 }
 
-export interface Scene {
-	id: string;
-	type: string;
-	label?: string;
-	narration?: string;
-	footage?: { from?: string; to?: string; show?: string };
-	visual?: { source: string; prompt?: string; query?: string; assetId?: string };
-	text?: {
-		kicker?: string;
-		heading?: string;
-		subheading?: string;
-		body?: string;
-		bullets?: { text: string }[];
-		quote?: string;
-		stat?: { value: string; label?: string };
-		cta?: { text: string };
-	};
-	chart?: { title?: string };
-	map?: { places?: { name?: string }[] };
-}
+/** A storyboard scene, exactly as the service validates it. */
+export type { Scene } from "../../shared/storyboard.ts";
+import type { Scene } from "../../shared/storyboard.ts";
 
 export interface VideoDetail extends VideoRow {
 	pipeline: { stage?: string; message?: string; error?: string; warnings?: string[]; total?: number; completed?: number };

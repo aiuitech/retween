@@ -2,7 +2,8 @@ import { Link, createFileRoute, getRouteApi, useNavigate } from "@tanstack/react
 import { useState } from "react";
 import { clock, op, plural, sizeOf, usd, when } from "../../../../../../api.ts";
 import { DeleteRender, DeleteVideo, ExportDialog, UploadLine, VideoDialog } from "../../../../../../forms.tsx";
-import type { RenderRow, ReviewRow, Scene, ThumbnailInfo, VideoDetail, YoutubeUpload } from "../../../../../../types.ts";
+import type { RenderRow, ReviewRow, ThumbnailInfo, VideoDetail, YoutubeUpload } from "../../../../../../types.ts";
+import { Storyboard } from "../../../../../../storyboard.tsx";
 import { CopyId, Crumbs, Empty, Menu, Status, StatusOf, Tween, isRunning, useAct, usePoll } from "../../../../../../ui.tsx";
 
 const project = getRouteApi("/_app/projects/$projectId");
@@ -95,9 +96,11 @@ function VideoPage() {
 					Preparing stopped: {pipeline.error} Ask your agent to fix the scene and prepare again; scenes that already worked are not redone.
 				</p>
 			)}
-			{current.timeline?.stale && !preparing && (
+			{!preparing && scenes.length > 0 && (current.status === "draft" || current.timeline?.stale) && (
 				<p className="note" style={{ marginTop: 22 }}>
-					The storyboard or brand changed after these timings were worked out. The next export recomposes them first.
+					{current.timeline
+						? "The storyboard or brand changed after this video was last prepared, so the timings below are partly estimates. Prepare it again to hear and see the changes."
+						: "This video has not been prepared yet. Preparing it records the narration, makes the pictures and times every scene."}
 				</p>
 			)}
 
@@ -105,15 +108,11 @@ function VideoPage() {
 				<div className="block-head">
 					<div>
 						<h2>Storyboard</h2>
-						<p>Written and revised by your agent. Each scene lasts as long as its narration takes to say.</p>
+						<p>Written by your agent, and yours to change here too. Each scene lasts as long as its narration takes to say.</p>
 					</div>
 					<CopyId id={current.id} />
 				</div>
-				{scenes.length === 0 ? (
-					<Empty title="No scenes yet">Tell your agent what this video should say and show. It writes the storyboard, and the scenes appear here.</Empty>
-				) : (
-					<Storyboard video={current} />
-				)}
+				<Storyboard video={current} />
 			</div>
 
 			<div className="block">
@@ -285,138 +284,5 @@ function VideoPage() {
 			<DeleteVideo open={dialog === "delete"} onClose={() => setDialog(null)} video={current} onDeleted={() => navigate({ to: "/projects/$projectId", params })} />
 			{removing && <DeleteRender open onClose={() => setRemoving(null)} render={removing} />}
 		</main>
-	);
-}
-
-/** What a scene puts on screen, in a line. */
-function shown(scene: Scene): string {
-	const text = scene.text ?? {};
-	return (
-		text.heading ??
-		text.quote ??
-		(text.stat ? [text.stat.value, text.stat.label].filter(Boolean).join(" ") : undefined) ??
-		text.bullets?.map((bullet) => bullet.text).join(", ") ??
-		text.cta?.text ??
-		scene.chart?.title ??
-		scene.map?.places?.map((place) => place.name).filter(Boolean).join(" to ") ??
-		text.body ??
-		scene.label ??
-		""
-	);
-}
-
-/** Where a scene's picture comes from. */
-function picture(scene: Scene): string {
-	if (scene.footage) return scene.footage.show === "voice" ? "Your recording, as voice" : "Your recording";
-	if (scene.type === "chart") return "Animated chart";
-	if (scene.type === "map") return "Animated map";
-	const visual = scene.visual;
-	if (!visual) return "Brand backdrop";
-	const about = visual.prompt ?? visual.query;
-	const kind: Record<string, string> = { image: "Generated still", vector: "Illustration", video: "Generated clip", stock: "Stock", asset: "A file from the project", solid: "Solid colour", gradient: "Gradient", brand: "Brand backdrop" };
-	return `${kind[visual.source] ?? visual.source}${about ? `: ${about}` : ""}`;
-}
-
-const typeName = (scene: Scene) => scene.type.charAt(0).toUpperCase() + scene.type.slice(1);
-
-const cut = (text: string, length: number) => (text.length > length ? `${text.slice(0, length).trimEnd()}…` : text);
-
-/**
- * The storyboard as an exposure sheet: a track with every scene drawn as wide
- * as it is long, and a row per scene beneath. Hovering either lights up the other.
- */
-function Storyboard({ video: current }: { video: VideoDetail }) {
-	const [lit, setLit] = useState<string | null>(null);
-	const scenes = current.storyboard.scenes;
-	const timed = new Map(current.timeline?.scenes.map((scene) => [scene.id, scene]));
-	const media = new Map(current.media.scenes.map((scene) => [scene.id, scene]));
-	const total = current.timeline?.durationSec;
-	// Before the voice is recorded there are no timings: every scene gets the same width.
-	const length = (id: string) => timed.get(id)?.durationSec ?? (total ? 0 : 1);
-	const sum = scenes.reduce((all, scene) => all + length(scene.id), 0) || 1;
-	let run = 0;
-	const edges = scenes.map((scene) => {
-		const at = run;
-		run += length(scene.id);
-		return at / sum;
-	});
-
-	const state = (id: string) => {
-		const parts = [media.get(id)?.narration, media.get(id)?.visual, media.get(id)?.cutout].filter((part) => part !== undefined);
-		if (parts.some((part) => part.status === "failed")) return "failed";
-		if (parts.some((part) => part.status === "pending")) return "pending";
-		if (parts.some((part) => part.status === "missing")) return "missing";
-		return "ready";
-	};
-
-	return (
-		<div className="cel">
-			<div className="track">
-				{scenes.map((scene, i) => (
-					<a
-						key={scene.id}
-						href={`#scene-${scene.id}`}
-						className={lit === scene.id ? "lit" : ""}
-						style={{ ["--len" as string]: length(scene.id) }}
-						title={`Scene ${i + 1}: ${shown(scene) || scene.type}`}
-						onMouseEnter={() => setLit(scene.id)}
-						onMouseLeave={() => setLit(null)}
-						onFocus={() => setLit(scene.id)}
-						onBlur={() => setLit(null)}
-					>
-						{i + 1} {typeName(scene)}
-					</a>
-				))}
-			</div>
-			<div className="track-keys" aria-hidden="true">
-				{edges.map((edge) => (
-					<b key={edge} style={{ left: `${edge * 100}%` }} />
-				))}
-				<b className="end" style={{ left: "100%" }} />
-			</div>
-			<div className="ruler" aria-hidden="true">
-				<span style={{ left: 0 }}>0:00</span>
-				<span style={{ left: "100%" }}>{total ? clock(total) : "Timed once the voice is recorded"}</span>
-			</div>
-			<div className="sheet-scroll">
-				<table className="xsheet" style={{ marginTop: 10 }}>
-					<thead>
-						<tr>
-							<th className="n">
-								<span className="hide">Scene</span>
-							</th>
-							<th>On screen</th>
-							<th>Narration</th>
-							<th>Picture</th>
-							<th>Starts</th>
-							<th>Lasts</th>
-							<th>Media</th>
-						</tr>
-					</thead>
-					<tbody>
-						{scenes.map((scene, i) => {
-							const timing = timed.get(scene.id);
-							const said = scene.narration ?? (scene.footage ? `“${scene.footage.from ?? ""} … ${scene.footage.to ?? ""}”` : "");
-							return (
-								<tr key={scene.id} id={`scene-${scene.id}`} className={lit === scene.id ? "lit" : ""} onMouseEnter={() => setLit(scene.id)} onMouseLeave={() => setLit(null)}>
-									<td className="n">{i + 1}</td>
-									<td className="shown">
-										{shown(scene) && <strong>{cut(shown(scene), 90)}</strong>}
-										<div className="softer">{typeName(scene)}</div>
-									</td>
-									<td className="said">{said ? cut(said, 260) : <span className="softer">No narration</span>}</td>
-									<td className="soft shown">{cut(picture(scene), 110)}</td>
-									<td className="t">{timing ? clock(timing.startSec) : ""}</td>
-									<td className="t">{timing ? `${timing.durationSec.toFixed(1)}s` : ""}</td>
-									<td className="state">
-										<StatusOf status={state(scene.id)} />
-									</td>
-								</tr>
-							);
-						})}
-					</tbody>
-				</table>
-			</div>
-		</div>
 	);
 }

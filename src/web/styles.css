@@ -486,6 +486,7 @@ label.field {
 
 input[type="text"],
 input[type="search"],
+input[type="number"],
 input:not([type]),
 textarea,
 select {
@@ -891,6 +892,10 @@ button.copy:hover {
 	background: var(--red-wash);
 	color: var(--red);
 }
+.menu-panel > button:disabled {
+	opacity: 0.45;
+	pointer-events: none;
+}
 .menu-panel hr {
 	border: 0;
 	border-top: 1px solid var(--rule);
@@ -1247,6 +1252,294 @@ table.xsheet {
 }
 .sheet-scroll {
 	overflow-x: auto;
+}
+
+/* The storyboard as a working sheet: tools and the track stay in view while the rows scroll under them. */
+.board-top {
+	position: sticky;
+	top: 57px;
+	z-index: 5;
+	background: var(--cel);
+	border-radius: 10px 10px 0 0;
+	border-bottom: 1px solid var(--rule-firm);
+}
+.board-bar {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	padding: 12px 14px 0;
+}
+.board-bar .grow {
+	flex: 1;
+}
+.zoom {
+	display: inline-flex;
+	border: 0;
+	padding: 0;
+	margin: 0 6px 0 0;
+}
+.zoom .btn {
+	position: relative;
+	border-radius: 0;
+	margin-left: -1px;
+}
+.zoom .btn:first-of-type {
+	border-radius: var(--radius) 0 0 var(--radius);
+}
+.zoom .btn:last-of-type {
+	border-radius: 0 var(--radius) var(--radius) 0;
+}
+.zoom .btn:hover,
+.zoom .btn[aria-pressed="true"] {
+	z-index: 1;
+}
+.zoom .btn[aria-pressed="true"] {
+	background: var(--blue-wash);
+	border-color: var(--blue-pencil);
+	color: var(--blue);
+}
+/* The track scrolls sideways when the scenes need more room than the page has. */
+.reel {
+	overflow-x: auto;
+	overflow-y: hidden;
+	padding: 14px 14px 8px;
+	scrollbar-width: thin;
+}
+.reel-in {
+	position: relative;
+}
+.board .track {
+	height: 58px;
+	margin: 0;
+}
+.board .track .seg {
+	position: relative;
+	flex: var(--len, 1) 1 0;
+	min-width: 8px;
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-end;
+	gap: 1px;
+	padding: 0 6px 6px 9px;
+	color: var(--lead);
+	font-size: 0.85rem;
+	line-height: 1.3;
+	white-space: nowrap;
+	overflow: hidden;
+	border-left: 1px solid var(--rule-firm);
+	background: linear-gradient(to top, rgb(98 174 232 / 0.16), transparent 70%);
+	cursor: grab;
+	user-select: none;
+}
+.board .track .seg {
+	container-type: inline-size;
+}
+.board .track .seg .what {
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+/* A scene drawn too narrow for its name keeps just its number. */
+@container (max-width: 62px) {
+	.board .track .seg .what span,
+	.board .track .seg .len {
+		display: none;
+	}
+}
+.board .track .seg .what b {
+	color: var(--graphite);
+	font-weight: 600;
+	font-variant-numeric: tabular-nums;
+}
+.board .track .seg .len {
+	color: var(--lead-soft);
+	font-size: 0.78rem;
+	font-variant-numeric: tabular-nums;
+}
+.board .track .seg:hover,
+.board .track .seg.lit {
+	color: var(--blue);
+	background: linear-gradient(to top, rgb(98 174 232 / 0.42), rgb(98 174 232 / 0.06));
+}
+.board .track .seg.on {
+	color: var(--blue);
+	background: linear-gradient(to top, rgb(98 174 232 / 0.55), rgb(98 174 232 / 0.14));
+	box-shadow: inset 0 -3px 0 var(--blue);
+}
+.board .track .seg:focus-visible {
+	outline-offset: -2px;
+}
+.board .track .seg.held {
+	opacity: 0.4;
+}
+.board .track .seg.drop-before {
+	box-shadow: inset 3px 0 0 var(--blue);
+}
+.board .track .seg.drop-after {
+	box-shadow: inset -3px 0 0 var(--blue);
+}
+.board .track-keys {
+	margin: 0;
+}
+.board .ruler {
+	margin: 10px 0 0;
+}
+.xsheet tbody tr {
+	scroll-margin-top: 250px;
+}
+.xsheet tr.on td {
+	background: var(--blue-wash);
+}
+.xsheet tr.on td:first-child {
+	box-shadow: inset 3px 0 0 var(--blue);
+}
+.xsheet tr.held td {
+	opacity: 0.4;
+}
+.xsheet tr.drop-before td {
+	box-shadow: inset 0 2px 0 var(--blue);
+}
+.xsheet tr.drop-after td {
+	box-shadow: inset 0 -2px 0 var(--blue);
+}
+.xsheet .n {
+	white-space: nowrap;
+}
+.xsheet .grip {
+	margin-right: 6px;
+	color: var(--rule-firm);
+	cursor: grab;
+	user-select: none;
+}
+.xsheet tr:hover .grip {
+	color: var(--lead);
+}
+.xsheet .do {
+	width: 1%;
+	white-space: nowrap;
+}
+.xsheet .do .acts {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+/* Editing one scene: its fields on the left, how it looks and sounds on the right. */
+.scene-form > .chips {
+	margin-bottom: 14px;
+}
+.scene-form > .note {
+	margin: 16px 0 0;
+}
+.scene-form > .sheet-foot {
+	position: sticky;
+	bottom: 0;
+	margin: 18px -22px -22px;
+	padding: 12px 22px;
+	background: var(--cel);
+	border-top: 1px solid var(--rule);
+}
+.scene-edit {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 260px;
+	gap: 24px;
+	align-items: start;
+}
+.pair {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 14px;
+	align-items: start;
+}
+.pair.three {
+	grid-template-columns: 1fr 1fr 1fr;
+}
+.group {
+	display: grid;
+	gap: 14px;
+	min-width: 0;
+	margin: 0;
+	padding: 12px 14px 14px;
+	border: 1px solid var(--rule);
+	border-radius: var(--radius);
+}
+fieldset.group legend {
+	padding: 0 6px;
+	margin-left: -6px;
+	font-weight: 600;
+}
+details.group {
+	display: block;
+}
+details.group summary {
+	font-weight: 600;
+	cursor: pointer;
+}
+details.group[open] summary {
+	margin-bottom: 14px;
+}
+textarea.json {
+	min-height: 380px;
+	font-size: 0.84rem;
+	white-space: pre;
+}
+.scene-now {
+	display: grid;
+	gap: 10px;
+	position: sticky;
+	top: 0;
+}
+.scene-now .frame {
+	display: block;
+	width: 100%;
+	background: var(--table);
+	border: 1px solid var(--rule);
+	border-radius: var(--radius);
+}
+.scene-now .frame.none {
+	display: grid;
+	place-content: center;
+	aspect-ratio: 16 / 9;
+	color: var(--lead-soft);
+	font-size: 0.9rem;
+}
+.scene-now p {
+	font-size: 0.87rem;
+}
+.scene-now .note {
+	margin: 0;
+	padding: 8px 10px;
+}
+.scene-has {
+	display: grid;
+	gap: 8px;
+	margin-top: 4px;
+	padding-top: 12px;
+	border-top: 1px solid var(--rule);
+}
+.scene-has h3 {
+	font-size: 0.95rem;
+}
+.scene-has audio,
+.scene-has video,
+.scene-has img {
+	display: block;
+	width: 100%;
+	border-radius: var(--radius);
+}
+.history-save {
+	display: flex;
+	gap: 8px;
+	margin-bottom: 16px;
+}
+.history-save input {
+	flex: 1;
+	min-width: 0;
+}
+ul.plain {
+	margin: 0 0 14px;
+	padding-left: 20px;
+	color: var(--lead);
 }
 
 /* ---------------------------------------------------------------- media */
@@ -1647,6 +1940,15 @@ label.check {
 	.toolbar .search {
 		width: 100%;
 		margin-left: 0;
+	}
+	.board-top,
+	.scene-now {
+		position: static;
+	}
+	.scene-edit,
+	.pair,
+	.pair.three {
+		grid-template-columns: 1fr;
 	}
 	.xsheet .said {
 		min-width: 22ch;
