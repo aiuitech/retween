@@ -1,4 +1,4 @@
-# Copy to .dev.vars for local development (`npm run dev`).
+# Copy to .dev.vars for local development (`pnpm dev`).
 BETTER_AUTH_SECRET=any-long-random-string-at-least-32-characters
 GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=

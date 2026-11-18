@@ -5,7 +5,7 @@
  * (The macOS build of that ffmpeg does have TLS, so on a Mac the first test
  * passes either way; the localCopies test is what pins the behaviour.)
  *
- *   node --test renderer/server/          (needs openssl and renderer/fixtures/media: npm --prefix renderer run fixtures)
+ *   node --test renderer/server/          (needs openssl and renderer/fixtures/media: pnpm --dir renderer fixtures)
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

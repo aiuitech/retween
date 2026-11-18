@@ -1,0 +1,3 @@
+# Standalone project: renderer/Dockerfile builds it from this directory alone.
+allowBuilds:
+  esbuild: true

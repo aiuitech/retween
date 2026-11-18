@@ -1,6 +1,6 @@
 /**
  * Loaded only by the `auth` CLI to generate `src/worker/db/auth-schema.ts`:
- *   npx auth generate --config auth.gen.ts --output src/worker/db/auth-schema.ts
+ *   pnpm exec auth generate --config auth.gen.ts --output src/worker/db/auth-schema.ts
  * The database is a stub; generation only reads the option set.
  */
 import { drizzleAdapter } from "@better-auth/drizzle-adapter";

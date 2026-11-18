@@ -1,0 +1,11 @@
+allowBuilds:
+  esbuild: true
+  workerd: true
+
+# The project tracks Cloudflare's toolchain release candidates as soon as they ship,
+# so they are exempt from pnpm's minimum release age. Everything else still waits.
+minimumReleaseAgeExclude:
+  - cf
+  - miniflare
+  - workerd
+  - "@cloudflare/*"

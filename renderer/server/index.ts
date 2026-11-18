@@ -388,7 +388,7 @@ server.requestTimeout = 0;
 server.keepAliveTimeout = 65_000;
 
 if (!fs.existsSync(`${BUNDLE_DIR}/index.html`)) {
-	log("server.fatal", { error: `no Remotion bundle at ${BUNDLE_DIR}; run "npm run build:bundle" first` });
+	log("server.fatal", { error: `no Remotion bundle at ${BUNDLE_DIR}; run "pnpm build:bundle" first` });
 	process.exit(1);
 }
 

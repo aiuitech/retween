@@ -1,7 +1,7 @@
 /**
  * Everything that talks to Remotion: one shared browser, one render job at a
  * time, stills and contact sheets. The bundle is built ahead of time
- * (`npm run build:bundle`, done in the Docker build) - nothing is bundled per request.
+ * (`pnpm build:bundle`, done in the Docker build) - nothing is bundled per request.
  *
  * A render instance runs one export and is thrown away. A preview instance is
  * kept warm per person and serves stills, sheets and the occasional draft

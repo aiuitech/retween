@@ -47,7 +47,7 @@ export default defineConfig(({ mode }) => {
 				DB: bindings.d1({ name: "retween", id: "202514c9-ef9c-4055-a818-9147862d5554" }),
 				MEDIA: bindings.r2({ name: "retween-media" }),
 				RENDERER: bindings.durableObject({ worker: WORKER, exportName: "Renderer" }),
-				// Local development talks to a renderer started with `npm run renderer` instead of a container.
+				// Local development talks to a renderer started with `pnpm renderer` instead of a container.
 				...(dev ? { DEV_RENDERER_URL: bindings.text("http://localhost:8099") } : {}),
 				ASSET_WORKFLOW: bindings.workflow({ name: "retween-asset", worker: WORKER, exportName: "AssetWorkflow" }),
 				PIPELINE_WORKFLOW: bindings.workflow({ name: "retween-pipeline", worker: WORKER, exportName: "PipelineWorkflow" }),

@@ -75,28 +75,28 @@ A scene uses a stretch of a recording with `footage: { assetId, from, to }`. `fr
 ## Develop
 
 ```sh
-npm install && npm --prefix renderer install
+pnpm install && pnpm --dir renderer install
 cp .dev.vars.example .dev.vars        # fill in the keys
-npm run db:migrate:local
-npm run renderer                      # terminal 1: renderer on :8099 (no Docker needed)
-npm run dev                           # terminal 2: http://localhost:5173
+pnpm db:migrate:local
+pnpm renderer                         # terminal 1: renderer on :8099 (no Docker needed)
+pnpm dev                              # terminal 2: http://localhost:5173
 ```
 
 Local development has a sign-in shortcut that is compiled out of production builds:
 `curl -X POST localhost:5173/api/dev/login -H 'content-type: application/json' -d '{"email":"you@example.com"}'`
 returns a session token (use it as a bearer token) and sets the browser cookie.
 
-After changing the database schema: `npm run db:generate`, then `npm run db:migrate:local`.
-After changing auth plugins: `npx auth generate --config auth.gen.ts --output src/worker/db/auth-schema.ts --adapter drizzle --dialect sqlite -y`, then the two commands above.
+After changing the database schema: `pnpm db:generate`, then `pnpm db:migrate:local`.
+After changing auth plugins: `pnpm exec auth generate --config auth.gen.ts --output src/worker/db/auth-schema.ts --adapter drizzle --dialect sqlite -y`, then the two commands above.
 
 ## Deploy
 
 Uses the `cf` CLI (not Wrangler); configuration is in `cloudflare.config.ts`. Docker must be running to build the renderer image.
 
 ```sh
-npm run db:migrate          # apply new migrations to production D1
-npm run deploy              # build and deploy; existing secrets are kept
-npm run deploy:secrets      # same, and upload secrets from .secrets.production
+pnpm db:migrate             # apply new migrations to production D1
+pnpm run deploy             # build and deploy; existing secrets are kept
+pnpm run deploy:secrets     # same, and upload secrets from .secrets.production
 ```
 
 Secrets (in `.secrets.production`, which is git-ignored): `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENROUTER_API_KEY`, `ELEVENLABS_API_KEY`, and optionally `PEXELS_API_KEY`, `PIXABAY_API_KEY` (more stock) and `FAL_KEY` (subject cut-outs and vector illustrations through fal.ai).
