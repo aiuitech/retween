@@ -117,7 +117,7 @@ Rates that are not reported per request live in `src/worker/services/pricing.ts`
 
 **Reconciliation.** Each night, after accruing storage, two optional jobs replace metered costs from the past week with what the vendor billed (`basis` becomes `vendor`). `admin.reconcile` runs them on demand, e.g. before producing statements for a month that just closed.
 
-- fal: set the `FAL_BILLING_KEY` secret to a fal key with the BILLING (or FULL) preset. Each request's charge is read from fal's billing-events API by its request id.
+- fal: uses the existing `FAL_KEY`, which needs billing read access (the BILLING or FULL preset). Each request's charge is read from fal's billing-events API by its request id.
 - Containers: set `CLOUDFLARE_ANALYTICS_TOKEN` to an API token with Account Analytics: Read. Containers are labelled with their instance name, so a run's CPU, memory and disk usage is read from the `containersUsageAdaptiveGroups` dataset over the run's window. This also replaces the full-CPU assumption with the CPU actually used.
 
 ## Cost controls

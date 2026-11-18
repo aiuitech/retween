@@ -4,8 +4,8 @@
  * reconciled get `basis: "vendor"`; rows the vendor has no figure for yet are
  * tried again the next night, for a week.
  *
- * Both jobs are optional and need their own credentials (Worker secrets):
- * - fal: FAL_BILLING_KEY, a fal key with the BILLING (or FULL) preset.
+ * Both jobs are optional and skip themselves without credentials (Worker secrets):
+ * - fal: the same FAL_KEY used for generation; it needs billing read access (the BILLING or FULL preset).
  * - Containers: CLOUDFLARE_ANALYTICS_TOKEN, an API token with Account Analytics: Read.
  */
 import { env } from "cloudflare:workers";
@@ -58,9 +58,9 @@ async function falBilled(key: string, requestIds: string[], start: Date): Promis
 }
 
 export async function reconcileFal(): Promise<ReconcileResult> {
-	const key = secret("FAL_BILLING_KEY");
+	const key = secret("FAL_KEY");
 	const result: ReconcileResult = { checked: 0, updated: 0, costBeforeUsd: 0, costAfterUsd: 0 };
-	if (!key) return { ...result, skipped: "FAL_BILLING_KEY is not set" };
+	if (!key) return { ...result, skipped: "FAL_KEY is not set" };
 	const usage = schema.usageEvents;
 	const rows = await db
 		.select({ id: usage.id, vendorRef: usage.vendorRef, costMicros: usage.costMicros, createdAt: usage.createdAt })

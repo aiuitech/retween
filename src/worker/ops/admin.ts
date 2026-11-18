@@ -258,7 +258,7 @@ export const adminOps = [
 		name: "admin.reconcile",
 		title: "Reconcile costs",
 		description:
-			"Replace metered costs from the past week with what the vendors actually billed: fal requests (needs FAL_BILLING_KEY) and " +
+			"Replace metered costs from the past week with what the vendors actually billed: fal requests (with FAL_KEY, which needs billing read access) and " +
 			"container runs (needs CLOUDFLARE_ANALYTICS_TOKEN). Runs nightly on its own; run it by hand before producing statements for a period that just closed.",
 		admin: true,
 		input: z.object({}),
