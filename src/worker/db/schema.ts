@@ -546,3 +546,27 @@ export const invoices = sqliteTable(
 	},
 	(t) => [uniqueIndex("invoices_user_period_idx").on(t.userId, t.period), index("invoices_stripe_idx").on(t.stripeInvoiceId)],
 );
+
+/**
+ * Saved states of a video's storyboard, to go back to. Named checkpoints are
+ * made on purpose (video.checkpoint) and keep the media they use from being
+ * cleaned up, so restoring one costs nothing. Automatic ones are taken before
+ * every storyboard change (the last 20 are kept) and are for undo.
+ */
+export const videoCheckpoints = sqliteTable(
+	"video_checkpoints",
+	{
+		id: text("id").primaryKey(),
+		videoId: text("video_id")
+			.notNull()
+			.references(() => videos.id, { onDelete: "cascade" }),
+		name: text("name"),
+		auto: integer("auto", { mode: "boolean" }).notNull().default(false),
+		/** What changed to make an automatic checkpoint, e.g. "scene.patch hook". */
+		reason: text("reason"),
+		storyboard: text("storyboard", { mode: "json" }).$type<Storyboard>().notNull(),
+		resolved: text("resolved", { mode: "json" }).$type<ResolvedMedia>().notNull(),
+		createdAt: createdAt(),
+	},
+	(t) => [index("video_checkpoints_video_idx").on(t.videoId, t.createdAt)],
+);

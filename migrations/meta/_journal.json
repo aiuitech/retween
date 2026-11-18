@@ -71,6 +71,13 @@
       "when": 1795027915017,
       "tag": "0009_review_timeline",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1795028584161,
+      "tag": "0010_video_checkpoints",
+      "breakpoints": true
     }
   ]
 }

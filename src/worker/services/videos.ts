@@ -17,6 +17,7 @@ import { blockedReason, getControls, limitSpec } from "./controls.ts";
 import { iconLicense, iconSets, iconSvgUrl, missingIcons } from "../providers/iconify.ts";
 import { type Orientation, searchStock } from "../providers/stock.ts";
 import { type Asset, assetsById, cancelGeneration, createAsset, deleteAsset } from "./assets.ts";
+import { protectedAssetIds } from "./checkpoints.ts";
 import { footageOf } from "./footage.ts";
 import { type Project, getProject } from "./projects.ts";
 import { videoSpend } from "./usage.ts";
@@ -654,7 +655,9 @@ export async function planMedia(
 				and(equals(render.videoId, video.id), within(render.status, ["queued", "starting", "rendering"])),
 		});
 		if (!active) {
-			const rows = await db.query.assets.findMany({ where: inArray(schema.assets.id, superseded) });
+			// Media a named checkpoint uses is kept, so going back to it costs nothing.
+			const kept = await protectedAssetIds(video.id);
+			const rows = (await db.query.assets.findMany({ where: inArray(schema.assets.id, superseded) })).filter((row) => !kept.has(row.id));
 			await Promise.all(rows.map((row) => deleteAsset(row).catch(() => undefined)));
 		}
 	}

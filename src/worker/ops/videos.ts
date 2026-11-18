@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { composeTimeline } from "../../../shared/compose.ts";
+import { mergePatch, unsetPath } from "../../../shared/patch.ts";
 import { EMPTY_STORYBOARD, Scene, Storyboard, StoryboardMusic } from "../../../shared/storyboard.ts";
 import { ASPECT_RATIOS, RESOLUTIONS } from "../../../shared/timeline.ts";
 import { db, schema } from "../db/client.ts";
@@ -9,6 +10,7 @@ import { AppError, badRequest, newId, notFound } from "../lib/util.ts";
 import { assetsById } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
 import { latestReview, reviewSummary, unreadReviews } from "../services/reviews.ts";
+import { checkpointsFor, deleteCheckpoints, difference, getCheckpoint, restorableMedia, saveCheckpoint } from "../services/checkpoints.ts";
 import { posterFor } from "../services/thumbnails.ts";
 import { createRender, freshTimeline, getRender, renderView } from "../services/renders.ts";
 import { deletePrefix } from "../services/storage.ts";
@@ -99,7 +101,9 @@ async function reviewStoryboard(video: Video, project: Project) {
 	};
 }
 
-async function saveStoryboard(video: Video, storyboard: Storyboard) {
+async function saveStoryboard(video: Video, storyboard: Storyboard, reason: string) {
+	// Every change can be undone: the storyboard as it was is kept (video.history, video.restore).
+	await saveCheckpoint(video, { auto: true, reason });
 	const [updated] = await db
 		.update(schema.videos)
 		.set({ storyboard, status: video.status === "preparing" ? "preparing" : "draft" })
@@ -273,7 +277,7 @@ export const videoOps = [
 		input: z.object({ videoId, storyboard: Storyboard }),
 		handler: async (input, { actor }) => {
 			const { video, project } = await getVideo(actor, input.videoId);
-			const updated = await saveStoryboard(video, input.storyboard);
+			const updated = await saveStoryboard(video, input.storyboard, "storyboard.set");
 			return { video: await videoSummary(updated), review: await reviewStoryboard(updated, project) };
 		},
 	}),
@@ -305,7 +309,7 @@ export const videoOps = [
 				throw badRequest(`Invalid scene: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
 			}
 			const storyboard = parsed.data;
-			const updated = await saveStoryboard(video, storyboard);
+			const updated = await saveStoryboard(video, storyboard, `scene.save ${input.scene.id}`);
 			return { sceneIds: scenes.map((scene) => scene.id), review: await reviewStoryboard(updated, project) };
 		},
 	}),
@@ -319,7 +323,7 @@ export const videoOps = [
 			const { video } = await getVideo(actor, input.videoId);
 			const scenes = video.storyboard.scenes.filter((scene) => scene.id !== input.sceneId);
 			if (scenes.length === video.storyboard.scenes.length) throw notFound(`Scene "${input.sceneId}"`);
-			await saveStoryboard(video, { ...video.storyboard, scenes });
+			await saveStoryboard(video, { ...video.storyboard, scenes }, `scene.remove ${input.sceneId}`);
 			return { sceneIds: scenes.map((scene) => scene.id) };
 		},
 	}),
@@ -336,8 +340,124 @@ export const videoOps = [
 			if (from < 0) throw notFound(`Scene "${input.sceneId}"`);
 			const [scene] = scenes.splice(from, 1);
 			scenes.splice(Math.min(input.index, scenes.length), 0, scene!);
-			await saveStoryboard(video, { ...video.storyboard, scenes });
+			await saveStoryboard(video, { ...video.storyboard, scenes }, `scene.move ${input.sceneId}`);
 			return { sceneIds: scenes.map((item) => item.id) };
+		},
+	}),
+
+	defineOp({
+		name: "scene.patch",
+		title: "Change part of scenes",
+		description:
+			"Change some fields of one scene, or the same fields of several at once, without sending whole scenes. `set` is merged in: objects field by field " +
+			"(so { text: { heading: \"New\" } } keeps the rest of the text, { visual: { look: { blur: 6 } } } keeps the picture), arrays are replaced whole, and null removes a field. " +
+			"`unset` removes dotted paths, e.g. [\"text.kicker\", \"timing\"]. Media is regenerated on the next video.prepare only for what the change affects " +
+			"(on-screen text, layout and transitions need only video.compose). Undo with video.history and video.restore.",
+		input: z.object({
+			videoId,
+			sceneIds: z.array(z.string()).min(1).max(80).describe("The scenes to change"),
+			set: z.record(z.string(), z.unknown()).optional().describe("Fields to merge into each scene (any Scene field except id)"),
+			unset: z.array(z.string().max(80)).max(20).optional().describe("Dotted paths to remove from each scene"),
+		}),
+		handler: async (input, { actor }) => {
+			const { video, project } = await getVideo(actor, input.videoId);
+			if (input.set && "id" in input.set) throw badRequest("A scene's id cannot be patched: it is how its media is kept. Use scene.save to add a scene with a new id.");
+			const wanted = new Set(input.sceneIds);
+			const missing = input.sceneIds.filter((id) => !video.storyboard.scenes.some((scene) => scene.id === id));
+			if (missing.length) throw notFound(`Scene "${missing[0]}"`);
+			const scenes = video.storyboard.scenes.map((scene) => {
+				if (!wanted.has(scene.id)) return scene;
+				let next = input.set ? mergePatch(scene, input.set) : scene;
+				for (const path of input.unset ?? []) next = unsetPath(next, path);
+				return next;
+			});
+			const parsed = Storyboard.safeParse({ ...video.storyboard, scenes });
+			if (!parsed.success) {
+				throw badRequest(`The patched scenes are not valid: ${parsed.error.issues.slice(0, 6).map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+			}
+			const updated = await saveStoryboard(video, parsed.data, `scene.patch ${input.sceneIds.join(", ")}`.slice(0, 200));
+			return {
+				scenes: parsed.data.scenes.filter((scene) => wanted.has(scene.id)),
+				review: await reviewStoryboard(updated, project),
+			};
+		},
+	}),
+
+	defineOp({
+		name: "video.checkpoint",
+		title: "Save a checkpoint",
+		description:
+			"Save the video as it is now under a name, before trying something you might want to undo. A named checkpoint keeps the media it uses, " +
+			"so restoring it later (video.restore) regenerates nothing. Every storyboard change is also saved automatically (the last 20), for undo.",
+		input: z.object({ videoId, name: z.string().min(1).max(120) }),
+		handler: async (input, { actor }) => {
+			const { video } = await getVideo(actor, input.videoId);
+			const checkpoint = await saveCheckpoint(video, { name: input.name });
+			return { checkpointId: checkpoint!.id, name: input.name, scenes: video.storyboard.scenes.length };
+		},
+	}),
+
+	defineOp({
+		name: "video.history",
+		title: "Storyboard history",
+		description: "Saved states of the storyboard, newest first: named checkpoints, and the automatic ones taken before each change (with what changed it), each with how it differs from now.",
+		input: z.object({ videoId }),
+		readOnly: true,
+		handler: async (input, { actor }) => {
+			const { video } = await getVideo(actor, input.videoId);
+			const rows = await checkpointsFor(video.id);
+			return {
+				checkpoints: rows.map((row) => ({
+					checkpointId: row.id,
+					...(row.name ? { name: row.name } : {}),
+					kind: row.auto ? "automatic" : "named",
+					...(row.reason ? { before: row.reason } : {}),
+					at: row.createdAt,
+					scenes: row.storyboard.scenes.length,
+					difference: difference(row.storyboard, video.storyboard),
+				})),
+			};
+		},
+	}),
+
+	defineOp({
+		name: "video.restore",
+		title: "Restore a checkpoint",
+		description:
+			"Put the storyboard (and the media it was using) back as it was in a checkpoint from video.history. The current state is saved first, so this can be undone too. " +
+			"Run video.compose (or video.prepare, if the restore reports missing media) afterwards.",
+		input: z.object({ videoId, checkpointId: z.string() }),
+		handler: async (input, { actor }) => {
+			const { video, project } = await getVideo(actor, input.videoId);
+			if (video.status === "preparing") throw new AppError(409, "The video is being prepared. Wait for it, or stop it with video.cancel, then restore.", "busy");
+			const checkpoint = await getCheckpoint(video.id, input.checkpointId);
+			await saveCheckpoint(video, { auto: true, reason: `video.restore ${checkpoint.name ?? checkpoint.id}` });
+			const { resolved, missing } = await restorableMedia(project.id, checkpoint);
+			const [updated] = await db
+				.update(schema.videos)
+				.set({ storyboard: checkpoint.storyboard, resolved: { ...resolved, withheld: {} }, status: "draft" })
+				.where(eq(schema.videos.id, video.id))
+				.returning();
+			return {
+				restored: checkpoint.name ?? checkpoint.id,
+				scenes: checkpoint.storyboard.scenes.length,
+				...(missing ? { missingMedia: missing } : {}),
+				next: missing ? `${missing} piece(s) of its media were cleaned up since; video.prepare makes them again.` : "All its media still exists: video.compose rebuilds the timeline.",
+				review: await reviewStoryboard(updated!, project),
+			};
+		},
+	}),
+
+	defineOp({
+		name: "checkpoint.delete",
+		title: "Delete checkpoints",
+		description: "Delete saved checkpoints. The media only they were keeping is cleaned up on the next video.prepare.",
+		input: z.object({ videoId, checkpointIds: z.array(z.string()).min(1).max(60) }),
+		destructive: true,
+		handler: async (input, { actor }) => {
+			const { video } = await getVideo(actor, input.videoId);
+			await deleteCheckpoints(video.id, input.checkpointIds);
+			return { deleted: input.checkpointIds.length };
 		},
 	}),
 
