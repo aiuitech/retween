@@ -4,12 +4,14 @@ import type { Actor } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
 import type { CostBasis, UsageKind } from "../db/schema.ts";
 import { AppError, newId, sha256Hex, startOfMonthUtc } from "../lib/util.ts";
-import { chargeFor, creditBalanceMicros } from "./billing.ts";
+import { KIND_LABELS, chargeFor, creditBalanceMicros } from "./billing.ts";
 import { getControls } from "./controls.ts";
 
 export interface UsageEvent {
 	userId: string;
 	projectId?: string | null;
+	/** The video the charge was made for, when there is one. */
+	videoId?: string | null;
 	kind: UsageKind;
 	provider: string;
 	model?: string;
@@ -40,6 +42,7 @@ export async function recordUsage(event: UsageEvent): Promise<void> {
 			id,
 			userId: event.userId,
 			projectId: event.projectId ?? null,
+			videoId: event.videoId ?? null,
 			kind: event.kind,
 			provider: event.provider,
 			model: event.model,
@@ -86,6 +89,41 @@ async function standing(user: { id: string; monthlyBudgetCents: number }) {
 }
 
 const dollars = (micros: number) => Math.round(micros / 10_000) / 100;
+
+/**
+ * What one video has cost so far, as billed (cost × markup), over its whole life: the media
+ * generated for it, including versions it later replaced, and its renders. Previews, drafts,
+ * footage processing and storage are account-wide and not counted.
+ */
+export async function videoSpend(videoId: string) {
+	const usage = schema.usageEvents;
+	const rows = await db
+		.select({ kind: usage.kind, costMicros: sql<number>`sum(${usage.costMicros})` })
+		.from(usage)
+		.where(eq(usage.videoId, videoId))
+		.groupBy(usage.kind);
+	const total = rows.reduce((sum, row) => sum + row.costMicros, 0);
+	return {
+		chargeUsd: dollars(chargeFor(total)),
+		byKind: rows
+			.filter((row) => row.costMicros > 0)
+			.sort((a, b) => b.costMicros - a.costMicros)
+			.map((row) => ({ kind: row.kind, label: KIND_LABELS[row.kind], chargeUsd: dollars(chargeFor(row.costMicros)) })),
+	};
+}
+
+/** What each video in a project has cost so far, as billed, keyed by video id. Videos with no charges are absent. */
+export async function projectVideoSpend(projectId: string): Promise<Map<string, number>> {
+	const usage = schema.usageEvents;
+	const rows = await db
+		.select({ videoId: usage.videoId, costMicros: sql<number>`sum(${usage.costMicros})` })
+		.from(schema.videos)
+		// From the project's videos to their charges, so both lookups use an index.
+		.innerJoin(usage, eq(usage.videoId, schema.videos.id))
+		.where(eq(schema.videos.projectId, projectId))
+		.groupBy(usage.videoId);
+	return new Map(rows.map((row) => [row.videoId!, dollars(chargeFor(row.costMicros))]));
+}
 
 export async function budgetStatus(user: { id: string; monthlyBudgetCents: number }) {
 	const { chargeMicros, creditMicros, payableMicros, limit } = await standing(user);

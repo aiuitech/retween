@@ -11,7 +11,7 @@ import { getProject } from "../services/projects.ts";
 import { createRender, freshTimeline, getRender, renderView } from "../services/renders.ts";
 import { deletePrefix } from "../services/storage.ts";
 import { getControls, limitResolution } from "../services/controls.ts";
-import { assertBudget } from "../services/usage.ts";
+import { assertBudget, projectVideoSpend } from "../services/usage.ts";
 import {
 	type Video,
 	composeAndSave,
@@ -96,13 +96,16 @@ export const videoOps = [
 	defineOp({
 		name: "video.list",
 		title: "List videos",
-		description: "Videos in a project, most recently updated first.",
+		description: "Videos in a project, most recently updated first, each with what it has cost so far (chargeUsd, as billed).",
 		input: z.object({ projectId: z.string() }),
 		readOnly: true,
 		handler: async (input, { actor }) => {
 			const project = await getProject(actor, input.projectId);
-			const rows = await db.query.videos.findMany({ where: eq(schema.videos.projectId, project.id), orderBy: desc(schema.videos.updatedAt) });
-			return { videos: await Promise.all(rows.map(videoSummary)) };
+			const [rows, spend] = await Promise.all([
+				db.query.videos.findMany({ where: eq(schema.videos.projectId, project.id), orderBy: desc(schema.videos.updatedAt) }),
+				projectVideoSpend(project.id),
+			]);
+			return { videos: await Promise.all(rows.map(async (row) => ({ ...(await videoSummary(row)), chargeUsd: spend.get(row.id) ?? 0 }))) };
 		},
 	}),
 
@@ -139,7 +142,8 @@ export const videoOps = [
 		name: "video.get",
 		title: "Get video",
 		description:
-			"A video with its storyboard, the state of each scene's media, pipeline progress, composed timing and recent renders. " +
+			"A video with its storyboard, the state of each scene's media, pipeline progress, composed timing, recent renders, " +
+			"and what it has cost so far as billed (spend: generated media, including versions it replaced, and renders; previews, drafts and storage are account-wide). " +
 			"Use waitSeconds to wait for video.prepare to finish.",
 		input: z.object({ videoId, waitSeconds: waitSeconds.default(0) }),
 		readOnly: true,

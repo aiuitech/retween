@@ -1,6 +1,6 @@
 import { Link, createFileRoute, getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
-import { clock, op, plural, sizeOf, when } from "../../../../../../api.ts";
+import { clock, op, plural, sizeOf, usd, when } from "../../../../../../api.ts";
 import { DeleteRender, DeleteVideo, ExportDialog, UploadLine, VideoDialog } from "../../../../../../forms.tsx";
 import type { RenderRow, Scene, VideoDetail, YoutubeUpload } from "../../../../../../types.ts";
 import { CopyId, Crumbs, Empty, Menu, Status, StatusOf, Tween, isRunning, useAct, usePoll } from "../../../../../../ui.tsx";
@@ -54,6 +54,7 @@ function VideoPage() {
 						<span>{current.aspect}</span>
 						<span>{plural(scenes.length, "scene")}</span>
 						{current.timeline && <span>{clock(current.timeline.durationSec)}</span>}
+						{current.spend.chargeUsd > 0 && <span className="num">{usd(current.spend.chargeUsd)} spent</span>}
 						<span>Updated {when(current.updatedAt)}</span>
 					</div>
 					{current.brief && <p>{current.brief}</p>}
@@ -179,6 +180,39 @@ function VideoPage() {
 					</div>
 				)}
 			</div>
+
+			{current.spend.byKind.length > 0 && (
+				<div className="block">
+					<div className="block-head">
+						<div>
+							<h2>Spending</h2>
+							<p>
+								What this video has cost so far, as billed: everything generated for it (including versions it replaced) and its exports. Previews, drafts and
+								storage are charged to the account.
+							</p>
+						</div>
+						<Link className="btn quiet small" to="/account/spending">
+							All spending
+						</Link>
+					</div>
+					<div className="lines">
+						{current.spend.byKind.map((line) => (
+							<div className="line" key={line.kind}>
+								<div className="grow">
+									<div className="title">{line.label}</div>
+								</div>
+								<span className="num">{usd(line.chargeUsd)}</span>
+							</div>
+						))}
+						<div className="line">
+							<div className="grow">
+								<strong>Total</strong>
+							</div>
+							<strong className="num">{usd(current.spend.chargeUsd)}</strong>
+						</div>
+					</div>
+				</div>
+			)}
 
 			{uploads.length > 0 && (
 				<div className="block">

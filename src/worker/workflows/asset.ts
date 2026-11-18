@@ -80,6 +80,7 @@ export class AssetWorkflow extends WorkflowEntrypoint<Env, { assetId: string }> 
 				await recordUsage({
 					userId: asset.createdBy,
 					projectId: asset.projectId,
+					videoId: asset.meta.videoId,
 					ref: asset.id,
 					kind: "video",
 					provider: "openrouter",

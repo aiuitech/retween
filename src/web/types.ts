@@ -21,6 +21,8 @@ export interface VideoRow {
 	scenes: number;
 	durationSec?: number;
 	updatedAt: string;
+	/** What the video has cost so far, as billed. Only video.list includes it. */
+	chargeUsd?: number;
 }
 
 interface MediaState {
@@ -51,6 +53,7 @@ export interface Scene {
 
 export interface VideoDetail extends VideoRow {
 	pipeline: { stage?: string; message?: string; error?: string; warnings?: string[]; total?: number; completed?: number };
+	spend: { chargeUsd: number; byKind: { kind: string; label: string; chargeUsd: number }[] };
 	storyboard: { scenes: Scene[] };
 	media: { scenes: { id: string; narration?: MediaState; visual?: MediaState; cutout?: MediaState }[] };
 	timeline?: { stale: boolean; durationSec: number; scenes: { id: string; startSec: number; durationSec: number }[] };

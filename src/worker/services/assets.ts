@@ -102,6 +102,8 @@ export async function createAsset(values: {
 	meta?: AssetMeta;
 	license?: AssetLicense;
 	generation?: GenerationSpec;
+	/** The video this asset is generated for, so its cost is charged to that video. */
+	videoId?: string;
 }): Promise<Asset> {
 	const [asset] = await db
 		.insert(schema.assets)
@@ -115,7 +117,7 @@ export async function createAsset(values: {
 			tags: values.tags ?? [],
 			status: "pending",
 			source: values.source,
-			meta: values.meta ?? {},
+			meta: values.videoId ? { ...values.meta, videoId: values.videoId } : (values.meta ?? {}),
 			license: values.license,
 			generation: values.generation,
 		})
@@ -258,7 +260,7 @@ export async function executeGeneration(assetId: string): Promise<Asset> {
 	if (!spec) throw new AppError(409, "Asset has nothing to generate", "invalid_state");
 	// Each charge is recorded as soon as the vendor answers, before storing, so a retry after a storage
 	// failure (which calls the vendor again) is charged for both calls, as the vendor charges us.
-	const usage = { userId: asset.createdBy, projectId: asset.projectId, ref: asset.id };
+	const usage = { userId: asset.createdBy, projectId: asset.projectId, videoId: asset.meta.videoId, ref: asset.id };
 	const falUsage = (model: string, charge: FalCharge) =>
 		recordUsage({
 			...usage,

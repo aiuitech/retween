@@ -18,6 +18,7 @@ import { type Orientation, searchStock } from "../providers/stock.ts";
 import { type Asset, assetsById, createAsset, deleteAsset } from "./assets.ts";
 import { footageOf } from "./footage.ts";
 import { type Project, getProject } from "./projects.ts";
+import { videoSpend } from "./usage.ts";
 
 export type Video = typeof schema.videos.$inferSelect;
 
@@ -253,7 +254,7 @@ export async function planMedia(
 		existing.set(created.id, created);
 		return { assetId: created.id, hash };
 	};
-	const base = { projectId: project.id, createdBy: userId, source: "generated" as const };
+	const base = { projectId: project.id, videoId: video.id, createdBy: userId, source: "generated" as const };
 	const sceneName = (scene: Scene) => scene.label ?? scene.id;
 	const limited = <T extends GenerationSpec>(spec: T) => limitSpec(controls, spec);
 	const withhold = (scene: Scene, reason: string) => {
@@ -703,15 +704,18 @@ export async function mediaStatus(video: Video, project: Project) {
 }
 
 export async function videoDetail(video: Video, project: Project) {
-	const [media, renders, currentHash] = await Promise.all([
+	const [media, renders, currentHash, spend] = await Promise.all([
 		mediaStatus(video, project),
 		db.query.renders.findMany({ where: eq(schema.renders.videoId, video.id), orderBy: desc(schema.renders.createdAt), limit: 20 }),
 		compositionHash(video, project.brand),
+		videoSpend(video.id),
 	]);
 	const timeline = video.timeline;
 	return {
 		...(await videoSummary(video)),
 		pipeline: video.pipeline,
+		/** What this video has cost so far, as billed. */
+		spend,
 		storyboard: video.storyboard,
 		media,
 		timeline: timeline

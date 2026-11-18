@@ -76,6 +76,8 @@ export interface AssetMeta {
 	voiceId?: string;
 	/** Hash of the inputs that produced this asset, used to skip regeneration. */
 	inputHash?: string;
+	/** The video whose preparation generated this asset, so what it cost is charged to that video. */
+	videoId?: string;
 	[key: string]: unknown;
 }
 
@@ -257,6 +259,8 @@ export const usageEvents = sqliteTable(
 			.notNull()
 			.references(() => user.id, { onDelete: "cascade" }),
 		projectId: text("project_id"),
+		/** The video the charge was made for: its prepared media and its renders. Empty for account-wide costs (storage, previews, footage). */
+		videoId: text("video_id"),
 		kind: text("kind").$type<UsageKind>().notNull(),
 		provider: text("provider").notNull(),
 		model: text("model"),
@@ -272,7 +276,7 @@ export const usageEvents = sqliteTable(
 		vendorRef: text("vendor_ref"),
 		createdAt: createdAt(),
 	},
-	(t) => [index("usage_user_idx").on(t.userId, t.createdAt), index("usage_created_idx").on(t.createdAt)],
+	(t) => [index("usage_user_idx").on(t.userId, t.createdAt), index("usage_created_idx").on(t.createdAt), index("usage_video_idx").on(t.videoId)],
 );
 
 /** An account's cost controls (see shared/controls.ts). Only the fields the person changed are stored. */

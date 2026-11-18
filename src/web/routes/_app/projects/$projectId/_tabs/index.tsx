@@ -1,6 +1,6 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { useState } from "react";
-import { clock, op, plural, when } from "../../../../../api.ts";
+import { clock, op, plural, usd, when } from "../../../../../api.ts";
 import { DeleteVideo, VideoDialog } from "../../../../../forms.tsx";
 import type { VideoRow } from "../../../../../types.ts";
 import { Empty, Menu, StatusOf, isRunning, usePoll } from "../../../../../ui.tsx";
@@ -48,6 +48,7 @@ function Videos() {
 									<span>{video.aspect}</span>
 									<span>{plural(video.scenes, "scene")}</span>
 									{video.durationSec ? <span>{clock(video.durationSec)}</span> : null}
+									{video.chargeUsd ? <span className="num">{usd(video.chargeUsd)} spent</span> : null}
 									<span>Updated {when(video.updatedAt)}</span>
 								</div>
 							</div>

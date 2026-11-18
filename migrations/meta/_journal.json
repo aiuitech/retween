@@ -50,6 +50,13 @@
       "when": 1794970391448,
       "tag": "0006_drop_approval",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1795024964299,
+      "tag": "0007_usage_video",
+      "breakpoints": true
     }
   ]
 }

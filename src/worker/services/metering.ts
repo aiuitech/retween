@@ -20,7 +20,7 @@ export const previewInstance = (userId: string) => `${PREVIEW_PREFIX}${userId}`;
  */
 export async function recordContainerRun(instance: string, startedAt: number, stoppedAt: number): Promise<void> {
 	const seconds = Math.max(0, (stoppedAt - startedAt) / 1000);
-	let owner: { userId: string; projectId: string | null; kind: "preview" | "render" | "footage" } | undefined;
+	let owner: { userId: string; projectId: string | null; videoId?: string; kind: "preview" | "render" | "footage" } | undefined;
 	if (instance.startsWith(PREVIEW_PREFIX)) {
 		owner = { userId: instance.slice(PREVIEW_PREFIX.length), projectId: null, kind: "preview" };
 	} else if (instance.startsWith(FOOTAGE_PREFIX)) {
@@ -28,7 +28,7 @@ export async function recordContainerRun(instance: string, startedAt: number, st
 		if (asset) owner = { userId: asset.createdBy, projectId: asset.projectId, kind: "footage" };
 	} else {
 		const render = await db.query.renders.findFirst({ where: eq(schema.renders.id, instance) });
-		if (render) owner = { userId: render.createdBy, projectId: render.projectId, kind: "render" };
+		if (render) owner = { userId: render.createdBy, projectId: render.projectId, videoId: render.videoId, kind: "render" };
 	}
 	if (!owner) {
 		console.warn("container run has no owner, not charged", instance, seconds);
