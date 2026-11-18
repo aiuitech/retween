@@ -1,8 +1,11 @@
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { clock, op, sizeOf, uploadAsset, when } from "../../../../../api.ts";
+import { clock, op, plural, sizeOf, uploadAsset, when } from "../../../../../api.ts";
 import { ASSET_KINDS, type AssetKind, type AssetRow } from "../../../../../types.ts";
 import { Confirm, CopyId, Dialog, Empty, Field, StatusOf, Tween, useAct, usePoll } from "../../../../../ui.tsx";
+
+/** The most files the grid loads at once. */
+const LIST_LIMIT = 200;
 
 interface Search {
 	kind?: AssetKind;
@@ -22,7 +25,7 @@ export const Route = createFileRoute("/_app/projects/$projectId/_tabs/assets")({
 	}),
 	loaderDeps: ({ search }) => ({ kind: search.kind, q: search.q, auto: search.auto }),
 	loader: ({ params, deps }) =>
-		op<{ assets: AssetRow[] }>("asset.list", { projectId: params.projectId, kind: deps.kind, search: deps.q, includeAuto: deps.auto ?? false, withUrls: true, limit: 200 }),
+		op<{ assets: AssetRow[] }>("asset.list", { projectId: params.projectId, kind: deps.kind, search: deps.q, includeAuto: deps.auto ?? false, withUrls: true, limit: LIST_LIMIT }),
 	component: Files,
 });
 
@@ -37,6 +40,7 @@ function Files() {
 	const navigate = useNavigate({ from: Route.fullPath });
 	const [query, setQuery] = useState(search.q ?? "");
 	const open = assets.find((asset) => asset.id === search.asset);
+	const selection = useSelection(assets);
 	usePoll(assets.some((asset) => asset.status === "pending" || asset.footage?.status === "processing"), 4000);
 
 	// Search as you type, without filling the browser history with every keystroke.
@@ -47,6 +51,7 @@ function Files() {
 	}, [query, search.q, navigate]);
 
 	const filtered = Boolean(search.kind || search.q || search.auto);
+	const picking = selection.selected.size > 0;
 	return (
 		<>
 			<Uploader projectId={projectId} />
@@ -85,31 +90,266 @@ function Files() {
 					<Empty title="No files yet">Drop in a logo, product shots, footage or a voiceover above. Whatever your agent generates or imports appears here too.</Empty>
 				)
 			) : (
-				<div className="tiles">
-					{assets.map((asset) => (
-						<Link key={asset.id} className="tile" from={Route.fullPath} search={(prev) => ({ ...prev, asset: asset.id })} resetScroll={false}>
-							<div className="thumb">
-								<Thumb asset={asset} />
-							</div>
-							<div className="cap">
-								<div className="title clip">{asset.name}</div>
-								<div className="facts">
-									<span>{sourceOf(asset)}</span>
-									{asset.width && asset.height ? (
-										<span>
-											{asset.width}×{asset.height}
-										</span>
-									) : null}
-									{asset.durationSec ? <span>{clock(asset.durationSec)}</span> : null}
+				<>
+					<SelectionBar projectId={projectId} assets={assets} selection={selection} />
+					<div className={`tiles${picking ? " picking" : ""}`}>
+						{assets.map((asset, index) => {
+							const on = selection.selected.has(asset.id);
+							return (
+								<div key={asset.id} className={`tile${on ? " on" : ""}`}>
+									<Link
+										from={Route.fullPath}
+										search={(prev) => ({ ...prev, asset: asset.id })}
+										resetScroll={false}
+										onClick={(event) => {
+											// While choosing files, or with Shift / Cmd / Ctrl held, a click selects instead of opening.
+											if (!picking && !event.shiftKey && !event.metaKey && !event.ctrlKey) return;
+											event.preventDefault();
+											selection.pick(index, event);
+										}}
+									>
+										<div className="thumb">
+											<Thumb asset={asset} />
+										</div>
+										<div className="cap">
+											<div className="title clip">{asset.name}</div>
+											<div className="facts">
+												<span>{sourceOf(asset)}</span>
+												{asset.width && asset.height ? (
+													<span>
+														{asset.width}×{asset.height}
+													</span>
+												) : null}
+												{asset.durationSec ? <span>{clock(asset.durationSec)}</span> : null}
+											</div>
+										</div>
+									</Link>
+									<label className="pick" title="Select (Shift-click to select a range)">
+										<input type="checkbox" checked={on} readOnly onClick={(event) => selection.pick(index, event)} aria-label={`Select ${asset.name}`} />
+									</label>
 								</div>
-							</div>
-						</Link>
-					))}
-				</div>
+							);
+						})}
+					</div>
+					{assets.length >= LIST_LIMIT && <p className="soft" style={{ marginTop: 14 }}>Showing the newest {LIST_LIMIT} files. Filter or search to find older ones.</p>}
+				</>
 			)}
 
 			{open && <FileDialog key={open.id} asset={open} onClose={() => void navigate({ search: (prev) => ({ ...prev, asset: undefined }), resetScroll: false })} />}
 		</>
+	);
+}
+
+
+type Selection = ReturnType<typeof useSelection>;
+
+/**
+ * Which files are chosen, the way a file manager does it: click toggles one,
+ * Shift-click selects everything between it and the last one clicked, and
+ * Cmd/Ctrl-A, Escape and Delete work while the grid has the page.
+ */
+function useSelection(assets: AssetRow[]) {
+	const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+	const anchor = useRef<number | null>(null);
+	const ids = assets.map((asset) => asset.id);
+	const [confirming, setConfirming] = useState(false);
+
+	// Forget files that left the list (deleted, or filtered out).
+	const key = ids.join(",");
+	// biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for the list of ids
+	useEffect(() => {
+		const present = new Set(ids);
+		setSelected((prev) => {
+			const next = new Set([...prev].filter((id) => present.has(id)));
+			return next.size === prev.size ? prev : next;
+		});
+		anchor.current = null;
+	}, [key]);
+
+	const pick = (index: number, event: { shiftKey: boolean }) => {
+		const id = ids[index];
+		if (!id) return;
+		const from = anchor.current !== null && ids[anchor.current] ? anchor.current : null;
+		setSelected((prev) => {
+			const next = new Set(prev);
+			if (event.shiftKey && from !== null) {
+				// The whole stretch follows the file the range starts from: all selected, or all cleared.
+				const select = prev.has(ids[from]!);
+				for (const each of ids.slice(Math.min(from, index), Math.max(from, index) + 1)) select ? next.add(each) : next.delete(each);
+			} else if (next.has(id)) next.delete(id);
+			else next.add(id);
+			return next;
+		});
+		if (!event.shiftKey || from === null) anchor.current = index;
+		// Shift-click also selects page text; drop that.
+		if (event.shiftKey) window.getSelection()?.removeAllRanges();
+	};
+	const all = () => setSelected(new Set(ids));
+	const clear = () => {
+		setSelected(new Set());
+		anchor.current = null;
+	};
+
+	useEffect(() => {
+		const onKey = (event: KeyboardEvent) => {
+			const target = event.target as HTMLElement | null;
+			if (target?.closest("input:not([type=checkbox]), textarea, select, [contenteditable]") || document.querySelector("dialog[open]")) return;
+			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+				event.preventDefault();
+				setSelected(new Set(ids));
+			} else if (event.key === "Escape" && selected.size) {
+				clear();
+			} else if ((event.key === "Delete" || event.key === "Backspace") && selected.size) {
+				event.preventDefault();
+				setConfirming(true);
+			}
+		};
+		document.addEventListener("keydown", onKey);
+		return () => document.removeEventListener("keydown", onKey);
+	});
+
+	return { selected, pick, all, clear, confirming, setConfirming };
+}
+
+function SelectionBar({ projectId, assets, selection }: { projectId: string; assets: AssetRow[]; selection: Selection }) {
+	const { busy, act } = useAct();
+	const [tagging, setTagging] = useState<"add" | "remove" | null>(null);
+	const { selected } = selection;
+	const chosen = assets.filter((asset) => selected.has(asset.id));
+	const count = chosen.length;
+	const box = useRef<HTMLInputElement>(null);
+	useEffect(() => {
+		if (box.current) box.current.indeterminate = count > 0 && count < assets.length;
+	}, [count, assets.length]);
+	const assetIds = chosen.map((asset) => asset.id);
+	const tagsInUse = [...new Set(chosen.flatMap((asset) => asset.tags))].sort();
+
+	return (
+		<div className={`picker-bar${count ? " active" : ""}`}>
+			<label className="check">
+				<input
+					ref={box}
+					type="checkbox"
+					checked={count > 0 && count === assets.length}
+					onChange={() => (count === assets.length ? selection.clear() : selection.all())}
+					aria-label={count === assets.length ? "Clear selection" : "Select all files"}
+				/>
+				{count ? `${plural(count, "file")} selected` : `${plural(assets.length, "file")}`}
+			</label>
+			{count > 0 ? (
+				<>
+					{count < assets.length && (
+						<button type="button" className="text" onClick={selection.all}>
+							Select all {assets.length}
+						</button>
+					)}
+					<span className="grow" />
+					<button type="button" className="btn quiet small" onClick={() => setTagging("add")} disabled={busy}>
+						Add tags
+					</button>
+					<button type="button" className="btn quiet small" onClick={() => setTagging("remove")} disabled={busy || tagsInUse.length === 0}>
+						Remove tags
+					</button>
+					<button type="button" className="btn danger small" onClick={() => selection.setConfirming(true)} disabled={busy}>
+						Delete
+					</button>
+					<button type="button" className="btn quiet small" onClick={selection.clear}>
+						Done
+					</button>
+				</>
+			) : (
+				<span className="soft hint-keys">Shift-click to select a range · ⌘A for all</span>
+			)}
+
+			{tagging && (
+				<TagDialog
+					mode={tagging}
+					count={count}
+					tagsInUse={tagsInUse}
+					busy={busy}
+					onClose={() => setTagging(null)}
+					onSubmit={async (tags) => {
+						const input = tagging === "add" ? { add: tags } : { remove: tags };
+						const done = tagging === "add" ? `Tagged ${plural(count, "file")}` : `Removed tags from ${plural(count, "file")}`;
+						if (await act(() => op("asset.tag", { projectId, assetIds, ...input }), done)) setTagging(null);
+					}}
+				/>
+			)}
+			<Confirm
+				open={selection.confirming && count > 0}
+				onClose={() => selection.setConfirming(false)}
+				title={count === 1 ? "Delete this file?" : `Delete ${count} files?`}
+				action={count === 1 ? "Delete file" : `Delete ${count} files`}
+				busy={busy}
+				onConfirm={async () => {
+					if (await act(() => op("asset.delete_many", { projectId, assetIds }), count === 1 ? "Deleted file" : `Deleted ${count} files`)) {
+						selection.setConfirming(false);
+						selection.clear();
+					}
+				}}
+			>
+				{count <= 3 ? chosen.map((asset) => `“${asset.name}”`).join(", ") : `${chosen.slice(0, 2).map((asset) => `“${asset.name}”`).join(", ")} and ${count - 2} more`}{" "}
+				will be deleted. Scenes or brand settings that use {count === 1 ? "it" : "them"} fall back to their defaults. This cannot be undone.
+			</Confirm>
+		</div>
+	);
+}
+
+function TagDialog({
+	mode,
+	count,
+	tagsInUse,
+	busy,
+	onClose,
+	onSubmit,
+}: {
+	mode: "add" | "remove";
+	count: number;
+	tagsInUse: string[];
+	busy: boolean;
+	onClose: () => void;
+	onSubmit: (tags: string[]) => void;
+}) {
+	const [text, setText] = useState("");
+	const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set());
+	const typed = text.split(",").map((tag) => tag.trim()).filter(Boolean);
+	const tags = mode === "add" ? typed : [...chosen];
+	return (
+		<Confirm.Form
+			title={mode === "add" ? `Add tags to ${plural(count, "file")}` : `Remove tags from ${plural(count, "file")}`}
+			action={mode === "add" ? "Add tags" : "Remove tags"}
+			busy={busy || tags.length === 0}
+			onClose={onClose}
+			onSubmit={() => tags.length && onSubmit(tags)}
+		>
+			{mode === "add" ? (
+				<Field label="Tags" hint="Separated by commas, for example: logo, reference">
+					<input value={text} onChange={(event) => setText(event.target.value)} maxLength={200} autoFocus />
+				</Field>
+			) : (
+				<div className="fields">
+					<span className="soft">Choose the tags to take off the selected files.</span>
+					<div className="chips">
+						{tagsInUse.map((tag) => (
+							<button
+								key={tag}
+								type="button"
+								aria-pressed={chosen.has(tag)}
+								onClick={() =>
+									setChosen((prev) => {
+										const next = new Set(prev);
+										next.has(tag) ? next.delete(tag) : next.add(tag);
+										return next;
+									})
+								}
+							>
+								{tag}
+							</button>
+						))}
+					</div>
+				</div>
+			)}
+		</Confirm.Form>
 	);
 }
 

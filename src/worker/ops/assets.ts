@@ -9,7 +9,7 @@ import { listVoices } from "../providers/elevenlabs.ts";
 import { IMAGE_ASPECTS, VIDEO_RESOLUTIONS } from "../providers/openrouter.ts";
 import { searchIcons, searchPlaces } from "../providers/iconify.ts";
 import { STOCK_PROVIDERS, availableProviders, getStockItem, searchStock } from "../providers/stock.ts";
-import { type Asset, assetView, createAsset, deleteAsset, getAsset, startGeneration, waitForAssets } from "../services/assets.ts";
+import { type Asset, assetView, assetsById, createAsset, deleteAsset, getAsset, startGeneration, waitForAssets } from "../services/assets.ts";
 import { renderSheet } from "../services/inspect.ts";
 import { getProject } from "../services/projects.ts";
 import { signedUploadUrl } from "../services/storage.ts";
@@ -128,6 +128,49 @@ export const assetOps = [
 			const { asset } = await getAsset(actor, input.assetId);
 			await deleteAsset(asset);
 			return { deleted: asset.id };
+		},
+	}),
+
+	defineOp({
+		name: "asset.delete_many",
+		title: "Delete assets",
+		description:
+			"Permanently delete several assets in one project, and their files. Scenes or brand settings that point at them fall back to defaults. " +
+			"Ids that are not in the project are reported as missing.",
+		input: z.object({ projectId, assetIds: z.array(z.string()).min(1).max(200) }),
+		destructive: true,
+		handler: async (input, { actor }) => {
+			const project = await getProject(actor, input.projectId);
+			const found = await assetsById(project.id, input.assetIds);
+			const rows = [...found.values()];
+			// A few at a time: each one is an R2 delete and a database write.
+			for (let i = 0; i < rows.length; i += 6) await Promise.all(rows.slice(i, i + 6).map((asset) => deleteAsset(asset)));
+			return { deleted: rows.map((row) => row.id), missing: [...new Set(input.assetIds)].filter((id) => !found.has(id)) };
+		},
+	}),
+
+	defineOp({
+		name: "asset.tag",
+		title: "Tag assets",
+		description: "Add tags to, or remove tags from, several assets in one project at once. An asset keeps at most 12 tags.",
+		input: z.object({
+			projectId,
+			assetIds: z.array(z.string()).min(1).max(200),
+			add: z.array(z.string().trim().min(1).max(40)).max(12).default([]),
+			remove: z.array(z.string()).max(50).default([]),
+		}),
+		handler: async (input, { actor }) => {
+			if (!input.add.length && !input.remove.length) throw badRequest("Give tags to add or remove");
+			const project = await getProject(actor, input.projectId);
+			const found = await assetsById(project.id, input.assetIds);
+			const drop = new Set(input.remove);
+			const changes = [...found.values()]
+				.map((asset) => ({ asset, tags: [...new Set([...asset.tags.filter((tag) => !drop.has(tag)), ...input.add])].slice(0, 12) }))
+				.filter(({ asset, tags }) => tags.join("\n") !== asset.tags.join("\n"));
+			for (let i = 0; i < changes.length; i += 10) {
+				await Promise.all(changes.slice(i, i + 10).map(({ asset, tags }) => db.update(schema.assets).set({ tags }).where(eq(schema.assets.id, asset.id))));
+			}
+			return { updated: changes.map(({ asset }) => asset.id), unchanged: found.size - changes.length };
 		},
 	}),
 
