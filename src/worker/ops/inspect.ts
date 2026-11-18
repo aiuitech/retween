@@ -4,12 +4,30 @@
  * the sound, and cut quick low-resolution drafts.
  */
 import { z } from "zod";
-import { type Issue, audioIssues, clock, cueSheet, fitIssues, pacingIssues, round2, sceneAt, sceneRange, settledFrame, sortIssues, spreadFrames } from "../../../shared/inspect.ts";
+import {
+	type Issue,
+	audioIssues,
+	clock,
+	cueSheet,
+	fitIssues,
+	pacingIssues,
+	round2,
+	samenessIssues,
+	sceneAt,
+	sceneRange,
+	settledFrame,
+	sortIssues,
+	spreadFrames,
+	structureIssues,
+} from "../../../shared/inspect.ts";
 import { masterLoudness } from "../../../shared/audio-models.ts";
 import { Scene } from "../../../shared/storyboard.ts";
 import { ASPECT_RATIOS, type AspectRatio, type Timeline, dimensionsFor } from "../../../shared/timeline.ts";
 import { AppError, badRequest, bytesToBase64, newId, notFound } from "../lib/util.ts";
+import { and, desc, eq, ne } from "drizzle-orm";
+import { db, schema } from "../db/client.ts";
 import { getAsset } from "../services/assets.ts";
+import { checkReads } from "../services/listen.ts";
 import { type SheetTile, analyseAudio, draftStatus, inspectTimeline, renderSheet, startDraft } from "../services/inspect.ts";
 import type { Project } from "../services/projects.ts";
 import { signedUrl } from "../services/storage.ts";
@@ -239,13 +257,20 @@ export const inspectOps = [
 		description:
 			"Review the whole video for problems without watching it, as a list ordered by severity with a suggested fix for each: " +
 			"text that overflows or shrinks to fit in each aspect ratio, narration that is too fast, more on-screen text than there is time to read, " +
-			"bullets that land just before a cut, dead air, missing or unusable media, and compose warnings. Works before video.prepare (timings are then estimated). " +
-			"Run it after each round of edits; check the sound separately with video.audio.",
+			"bullets that land just before a cut, dead air, missing or unusable media, and compose warnings. " +
+			"It also listens to the narration (each take is transcribed once and compared with the script, so misread names and skipped words show up), " +
+			"and looks at the video's shape: how soon the first word lands, a silent title-card opening, stretches where the picture does not change, " +
+			"runs of the same kind of scene, no call to action, and a structure copied from the project's other videos. " +
+			"Works before video.prepare (timings are then estimated). Run it after each round of edits; check the sound separately with video.audio.",
 		input: z.object({
 			videoId,
 			aspects: z.array(aspect).min(1).max(4).optional().describe("Aspect ratios to check the layout in. Defaults to the brand's, or the video's own"),
 			sceneIds: z.array(z.string()).min(1).optional().describe("Only check these scenes"),
 			layout: z.boolean().default(true).describe("Render every scene to measure text fit (takes a few seconds per aspect ratio). False checks timing only"),
+			listen: z
+				.boolean()
+				.default(true)
+				.describe("Compare what the voice says with the script. Each narration take is transcribed the first time (a fraction of a cent a minute) and remembered"),
 		}),
 		readOnly: true,
 		handler: async (input, { actor }) => {
@@ -263,6 +288,20 @@ export const inspectOps = [
 				issues.push({ severity: "warning", kind: "compose", sceneId, message: warning });
 			}
 			issues.push(...pacingIssues(timeline, storyboard));
+		issues.push(...structureIssues(timeline, storyboard));
+		const others = await db.query.videos.findMany({
+			where: and(eq(schema.videos.projectId, project.id), ne(schema.videos.id, video.id)),
+			columns: { title: true, storyboard: true },
+			orderBy: desc(schema.videos.updatedAt),
+			limit: 30,
+		});
+		issues.push(...samenessIssues(storyboard, others));
+		let unheard: string[] = [];
+		if (input.listen) {
+			const reads = await checkReads(video, project, timeline, actor.id, input.sceneIds);
+			issues.push(...reads.issues);
+			unheard = reads.unheard;
+		}
 
 			const sheets: { aspect: AspectRatio; url: string }[] = [];
 			if (input.layout) {
@@ -287,6 +326,7 @@ export const inspectOps = [
 				...(inspected.draft ? { draft: true, note: notes.find((note) => /has not been generated yet/.test(note)) } : {}),
 				aspects: input.layout ? aspects : [],
 				issues: sorted,
+				...(unheard.length ? { unheard: { sceneIds: unheard, note: "These takes could not be transcribed, so their narration was not compared with the script. Try again later." } } : {}),
 				sheets,
 				next: inspected.draft ? "Run video.prepare, then video.check again for real timings and video.audio for the sound." : "Check the sound with video.audio.",
 			};

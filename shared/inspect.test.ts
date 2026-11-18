@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { type AudioAnalysis, audioIssues, clock, cueSheet, fitIssues, pacingIssues, sceneAt, sceneRange, settledFrame, spreadFrames } from "./inspect.ts";
+import { type AudioAnalysis, audioIssues, clock, cueSheet, fitIssues, pacingIssues, samenessIssues, sceneAt, sceneRange, settledFrame, shapeSimilarity, spreadFrames, structureIssues } from "./inspect.ts";
 import type { Storyboard } from "./storyboard.ts";
 import { Timeline } from "./timeline.ts";
 
@@ -118,4 +118,47 @@ test("audioIssues flags clipping, loud music, level jumps and silence", () => {
 	const kinds = issues.map((issue) => issue.kind);
 	for (const kind of ["clipping", "quiet", "music-too-loud", "narration-level-jump", "silence"]) assert.ok(kinds.includes(kind), kind);
 	assert.ok(!kinds.includes("no-headroom"), "clipping already covers the peak");
+});
+
+test("structureIssues is quiet on a well-paced video", () => {
+	const issues = structureIssues(fixture, board);
+	assert.deepEqual(
+		issues.filter((issue) => issue.severity !== "info").map((issue) => issue.kind),
+		[],
+	);
+});
+
+test("structureIssues flags a late first word, a long still and repeated scene types", () => {
+	const late = {
+		...fixture,
+		captions: fixture.captions.map((cue) => ({ ...cue, startFrame: cue.startFrame + 120, endFrame: cue.endFrame + 120, words: cue.words.map((word) => ({ ...word, startFrame: word.startFrame + 120, endFrame: word.endFrame + 120 })) })),
+	};
+	assert.ok(structureIssues(late, board).some((issue) => issue.kind === "slow-hook"));
+
+	// The opening title held for 10 s with nothing changing.
+	const slow = { ...fixture, scenes: fixture.scenes.map((scene, i) => (i === 0 ? { ...scene, durationInFrames: 300 } : scene)) };
+	assert.ok(structureIssues(slow, board).some((issue) => issue.kind === "slow-open" && issue.sceneId === "open"));
+
+	const quotes = { ...fixture, scenes: fixture.scenes.map((scene, i) => (i >= 2 && i <= 4 ? { ...scene, type: "quote" as const, content: {} } : scene)) };
+	assert.ok(structureIssues(quotes, board).some((issue) => issue.kind === "repetitive-run"));
+
+	const noCta = { ...fixture, scenes: fixture.scenes.slice(0, -1) };
+	assert.ok(structureIssues(noCta, { scenes: board.scenes.slice(0, -1) }).some((issue) => issue.kind === "no-call-to-action"));
+});
+
+test("shapeSimilarity and samenessIssues spot a template reused with new words", () => {
+	assert.equal(shapeSimilarity(["a", "b", "c"], ["a", "b", "c"]), 1);
+	assert.equal(shapeSimilarity(["a", "b", "c", "d"], ["a", "x", "c", "d"]), 0.75);
+	const scenes = (words: string) =>
+		["title", "media", "bullets", "stat", "split", "outro"].map((type, i) => ({ id: `s${i}`, type: type as "title", narration: `${words} scene ${i} goes here today` }));
+	const mine = { scenes: scenes("Here is why our coffee") };
+	const others = [
+		{ title: "One", storyboard: { scenes: scenes("Here is why our tea") } },
+		{ title: "Two", storyboard: { scenes: scenes("Here is why our cocoa") } },
+	];
+	const kinds = samenessIssues(mine, others).map((issue) => issue.kind);
+	assert.ok(kinds.includes("template-sameness"));
+	assert.deepEqual(samenessIssues(mine, [others[0]!]).map((issue) => issue.kind), []);
+	const copy = { title: "Copy", storyboard: { scenes: scenes("Here is why our coffee") } };
+	assert.ok(samenessIssues(mine, [copy]).some((issue) => issue.kind === "same-opening"));
 });

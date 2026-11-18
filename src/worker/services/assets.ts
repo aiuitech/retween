@@ -481,6 +481,8 @@ async function speakWithOpenRouter(
 	return storeAsset(asset, take.audio, take.contentType, {
 		meta: {
 			words,
+			// What the transcriber heard, kept so video.check can compare the take with the script without transcribing it again.
+			heard: heard.words.map((word) => [word.word, Math.round(word.start * 1000) / 1000, Math.round(word.end * 1000) / 1000]),
 			spokenText: spoken.spoken,
 			voiceId: voice,
 			model: spec.modelId,

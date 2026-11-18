@@ -337,6 +337,194 @@ export function pacingIssues(timeline: Timeline, storyboard: Storyboard): Issue[
 	return issues;
 }
 
+// --- structure: the opening, visual rhythm and sameness -------------------------------------
+
+/** Whether a scene's picture moves on its own, so a long stretch of it is not a still frame. */
+function moving(scene: TimelineScene): boolean {
+	const bg = scene.background;
+	return bg.kind === "video" || bg.kind === "lottie" || (bg.kind === "image" && bg.cutout?.mode === "parallax") || scene.type === "map";
+}
+
+/** Absolute frames at which something new appears on screen: cuts and every bullet, chart value and map place. */
+function visualChanges(scene: TimelineScene): number[] {
+	return [scene.startFrame, ...itemFrames(scene).map((frame) => scene.startFrame + frame)].sort((a, b) => a - b);
+}
+
+/** The longest stretch inside a scene with nothing new on screen, in frames, and where it starts. Zero for a moving picture. */
+function longestStill(scene: TimelineScene): { frames: number; atFrame: number } {
+	if (moving(scene)) return { frames: 0, atFrame: scene.startFrame };
+	const changes = [...visualChanges(scene), scene.startFrame + scene.durationInFrames];
+	let best = { frames: 0, atFrame: scene.startFrame };
+	for (let i = 1; i < changes.length; i++) {
+		const gap = changes[i]! - changes[i - 1]!;
+		if (gap > best.frames) best = { frames: gap, atFrame: changes[i - 1]! };
+	}
+	return best;
+}
+
+/** Seconds of the opening within which viewers decide whether to stay. */
+export const OPENING_SECONDS = 15;
+
+/**
+ * How the video holds attention, from its shape alone: how soon anyone speaks,
+ * whether it opens on a title card, how long the picture stays unchanged, and
+ * whether the same kind of scene repeats. These are prompts to look again, not
+ * rules: a deliberate slow open is fine.
+ */
+export function structureIssues(timeline: Timeline, storyboard: Storyboard): Issue[] {
+	const { fps } = timeline;
+	const issues: Issue[] = [];
+	const scenes = timeline.scenes;
+	if (!scenes.length) return issues;
+	const boardScenes = new Map(storyboard.scenes.map((scene) => [scene.id, scene]));
+
+	// How soon the first word lands.
+	const voiced = timeline.audio.filter((clip) => clip.kind === "narration");
+	const firstWord = Math.min(
+		...timeline.captions.flatMap((cue) => cue.words.map((word) => word.startFrame)),
+		...(timeline.captions.length ? [] : voiced.map((clip) => clip.startFrame)),
+	);
+	if (voiced.length && Number.isFinite(firstWord) && firstWord / fps > 3) {
+		issues.push({
+			severity: "warning",
+			kind: "slow-hook",
+			atSec: 0,
+			sceneId: scenes[0]!.id,
+			message: `Nothing is said for the first ${(firstWord / fps).toFixed(1)}s. Viewers decide whether to stay in the opening seconds, and most watch with the sound on.`,
+			fix: "Start the narration in the first scene (shorten timing.leadInMs), or open with a line that states the promise of the video.",
+		});
+	}
+
+	// A title card with nothing said is a slow way in.
+	const first = scenes[0]!;
+	const firstBoard = boardScenes.get(first.id);
+	if (first.type === "title" && !firstBoard?.narration?.trim() && !firstBoard?.footage && first.durationInFrames / fps > 2.5) {
+		issues.push({
+			severity: "info",
+			kind: "title-card-open",
+			sceneId: first.id,
+			atSec: 0,
+			message: `The video opens on a silent title card for ${(first.durationInFrames / fps).toFixed(1)}s.`,
+			fix: "Open on the hook instead: say the most interesting thing first and let the title sit under it, or move the title later.",
+		});
+	}
+
+	// Stretches where the picture does not change.
+	const openingEnd = OPENING_SECONDS * fps;
+	for (const scene of scenes) {
+		const still = longestStill(scene);
+		const seconds = still.frames / fps;
+		const inOpening = still.atFrame < openingEnd;
+		const base = { sceneId: scene.id, atSec: secondsAt(still.atFrame, fps) };
+		if (inOpening && seconds > 7) {
+			issues.push({
+				...base,
+				severity: "warning",
+				kind: "slow-open",
+				message: `Scene "${scene.id}": the picture does not change for ${seconds.toFixed(1)}s during the opening, where attention is easiest to lose.`,
+				fix: "Split the scene, cue bullets or chart values through it, or give it a moving picture (a clip, footage, or a still with cutout \"parallax\").",
+			});
+		} else if (seconds > 20) {
+			issues.push({ ...base, severity: "warning", kind: "static-stretch", message: `Scene "${scene.id}": ${seconds.toFixed(1)}s with nothing new on screen.`, fix: "Split it into two scenes with different pictures, or reveal its points as they are said." });
+		} else if (seconds > 12) {
+			issues.push({ ...base, severity: "info", kind: "static-stretch", message: `Scene "${scene.id}": ${seconds.toFixed(1)}s with nothing new on screen.`, fix: "Consider splitting it or revealing its points as they are said." });
+		}
+	}
+
+	// The same kind of scene over and over.
+	const signature = (scene: TimelineScene) => {
+		const visual = boardScenes.get(scene.id)?.visual?.source ?? scene.background.kind;
+		return scene.type === "media" || scene.type === "split" ? `${scene.type}:${visual}` : scene.type;
+	};
+	for (let i = 0; i < scenes.length; ) {
+		let j = i + 1;
+		while (j < scenes.length && signature(scenes[j]!) === signature(scenes[i]!)) j++;
+		if (j - i >= 3) {
+			issues.push({
+				severity: "info",
+				kind: "repetitive-run",
+				sceneId: scenes[i]!.id,
+				atSec: secondsAt(scenes[i]!.startFrame, fps),
+				message: `${j - i} ${scenes[i]!.type} scenes in a row (${scenes.slice(i, j).map((scene) => scene.id).join(", ")}).`,
+				fix: "Vary the rhythm: turn one into a stat, chart, quote or split scene, or change its picture.",
+			});
+		}
+		i = j;
+	}
+	if (scenes.length >= 6) {
+		const counts = new Map<string, number>();
+		for (const scene of scenes) counts.set(scene.type, (counts.get(scene.type) ?? 0) + 1);
+		const [type, count] = [...counts].sort((a, b) => b[1] - a[1])[0]!;
+		if (count / scenes.length > 0.6) {
+			issues.push({ severity: "info", kind: "one-note", message: `${count} of ${scenes.length} scenes are ${type} scenes.`, fix: "Mix in other scene types where the content allows: a stat for a number, a chart for a trend, a quote for a voice." });
+		}
+	}
+
+	// Nowhere to go at the end.
+	const hasCta = storyboard.scenes.some((scene) => scene.text?.cta) || scenes.at(-1)!.type === "outro";
+	if (scenes.length >= 4 && !hasCta) {
+		issues.push({ severity: "info", kind: "no-call-to-action", sceneId: scenes.at(-1)!.id, message: "The video ends without a call to action.", fix: "End on an outro scene, or give the last scene text.cta saying what to do next." });
+	}
+	return issues;
+}
+
+/** A storyboard's shape: the kind of each scene and where its picture comes from. */
+export function storyboardShape(storyboard: Storyboard): string[] {
+	return storyboard.scenes.map((scene) => `${scene.type}:${scene.footage ? "footage" : (scene.visual?.source ?? "brand")}`);
+}
+
+/** How alike two shapes are, 0–1: the longest common subsequence over the longer length. */
+export function shapeSimilarity(a: string[], b: string[]): number {
+	if (!a.length || !b.length) return 0;
+	const row = new Array<number>(b.length + 1).fill(0);
+	for (let i = 1; i <= a.length; i++) {
+		let diagonal = 0;
+		for (let j = 1; j <= b.length; j++) {
+			const above = row[j]!;
+			row[j] = a[i - 1] === b[j - 1] ? diagonal + 1 : Math.max(row[j]!, row[j - 1]!);
+			diagonal = above;
+		}
+	}
+	return row[b.length]! / Math.max(a.length, b.length);
+}
+
+const openingWords = (storyboard: Storyboard) =>
+	normalise(storyboard.scenes.find((scene) => scene.narration?.trim())?.narration ?? "")
+		.slice(0, 8)
+		.join(" ");
+
+/**
+ * Whether this video looks like a copy of the project's other videos with the
+ * words changed. YouTube does not pay for "inauthentic content": videos that
+ * are generic, repetitive or made from one template with little variation.
+ */
+export function samenessIssues(storyboard: Storyboard, others: { title: string; storyboard: Storyboard }[]): Issue[] {
+	const shape = storyboardShape(storyboard);
+	if (shape.length < 5) return [];
+	const issues: Issue[] = [];
+	const alike = others.filter((other) => shapeSimilarity(shape, storyboardShape(other.storyboard)) >= 0.85);
+	if (alike.length >= 2) {
+		issues.push({
+			severity: "warning",
+			kind: "template-sameness",
+			message: `This video has the same structure, scene for scene, as ${alike.length} others in the project (${alike.slice(0, 3).map((other) => `"${other.title}"`).join(", ")}${alike.length > 3 ? ", …" : ""}).`,
+			fix: "Videos made from one template with only the words changed can be refused monetisation on YouTube as repetitive. Shape this one around its own content: a different opening, other scene types, its own pictures.",
+		});
+	}
+	const opening = openingWords(storyboard);
+	const sameOpening = opening.split(" ").length >= 5 ? others.filter((other) => openingWords(other.storyboard) === opening) : [];
+	if (sameOpening.length) {
+		issues.push({
+			severity: "info",
+			kind: "same-opening",
+			sceneId: storyboard.scenes.find((scene) => scene.narration?.trim())?.id,
+			message: `The narration opens with the same words as "${sameOpening[0]!.title}".`,
+			fix: "Write an opening line for this video's own subject.",
+		});
+	}
+	return issues;
+}
+
 // --- layout ------------------------------------------------------------------------------
 
 /** What a FitBox reported (see renderer/src/lib/report.ts). `probe` is the tile index. */
