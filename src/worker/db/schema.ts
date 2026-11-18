@@ -437,6 +437,10 @@ export const reviews = sqliteTable(
 		fromSec: real("from_sec").notNull().default(0),
 		toSec: real("to_sec"),
 		scenes: text("scenes", { mode: "json" }).$type<ReviewScene[]>().notNull().default([]),
+		/** The timeline the cut was made from, so commented moments can be shown as they were seen. */
+		timeline: text("timeline", { mode: "json" }).$type<Timeline>(),
+		/** The finished export being reviewed, when it is one rather than a draft. */
+		renderId: text("render_id"),
 		/** The storyboard hash at the time, to tell whether a newer cut exists. */
 		storyboardHash: text("storyboard_hash"),
 		verdict: text("verdict").$type<ReviewVerdict>(),

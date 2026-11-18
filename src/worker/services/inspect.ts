@@ -92,7 +92,7 @@ export async function inspectTimeline(video: Video, project: Project, trial?: Sc
 // --- the preview renderer ------------------------------------------------------------
 
 /** Calls the person's preview renderer, retrying once: a container that is starting or being replaced can drop a request. */
-async function previewCall(actor: Actor, path: string, init?: RequestInit): Promise<Response> {
+async function previewCall(actor: Pick<Actor, "id">, path: string, init?: RequestInit): Promise<Response> {
 	const request = () => rendererFetch(previewInstance(actor.id), path, init);
 	let response = await request().catch(() => null);
 	if (!response || response.status >= 500) {
@@ -116,7 +116,7 @@ async function previewCall(actor: Actor, path: string, init?: RequestInit): Prom
 	return response;
 }
 
-const postJson = (actor: Actor, path: string, body: unknown) =>
+const postJson = (actor: Pick<Actor, "id">, path: string, body: unknown) =>
 	previewCall(actor, path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 /** Strips signed-URL query strings from renderer messages. */
@@ -227,12 +227,12 @@ export interface DraftStatus {
 	warnings?: string[];
 }
 
-const draftKey = (projectId: string, videoId: string, draftId: string) => `projects/${projectId}/previews/${videoId}-${draftId}.mp4`;
+export const draftKey = (projectId: string, videoId: string, draftId: string) => `projects/${projectId}/previews/${videoId}-${draftId}.mp4`;
 
 /** Starts a draft render of frames [first, last] on the preview renderer. */
 export async function startDraft(
-	actor: Actor,
-	project: Project,
+	actor: Pick<Actor, "id">,
+	project: Pick<Project, "id">,
 	draftId: string,
 	timeline: Timeline,
 	size: { width: number; height: number },
@@ -246,7 +246,7 @@ export async function startDraft(
  * Where a draft stands. A finished draft is copied from the renderer into R2
  * the first time it is seen, so its link outlives the container.
  */
-export async function draftStatus(actor: Actor, project: Project, videoId: string, draftId: string): Promise<DraftStatus> {
+export async function draftStatus(actor: Pick<Actor, "id">, project: Pick<Project, "id">, videoId: string, draftId: string): Promise<DraftStatus> {
 	const key = draftKey(project.id, videoId, draftId);
 	if (await env.MEDIA.head(key)) return { draftId, status: "done", progress: 1, url: await signedUrl(key, { expiresIn: 24 * 3600 }) };
 

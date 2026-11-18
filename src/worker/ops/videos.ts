@@ -8,6 +8,7 @@ import { db, schema } from "../db/client.ts";
 import { AppError, badRequest, newId, notFound } from "../lib/util.ts";
 import { assetsById } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
+import { latestReview, reviewSummary, unreadReviews } from "../services/reviews.ts";
 import { posterFor } from "../services/thumbnails.ts";
 import { createRender, freshTimeline, getRender, renderView } from "../services/renders.ts";
 import { deletePrefix } from "../services/storage.ts";
@@ -176,8 +177,17 @@ export const videoOps = [
 		handler: async (input, { actor }) => {
 			const { video, project } = await getVideo(actor, input.videoId);
 			const current = video.status === "preparing" && input.waitSeconds ? await waitWhilePreparing(video.id, input.waitSeconds) : video;
-			const [detail, poster] = await Promise.all([videoDetail(current, project, detailOptions(input)), posterFor(current)]);
-			return { video: { ...detail, thumbnailAssetId: current.thumbnailAssetId ?? undefined, poster } };
+			const [detail, poster, unread, latest] = await Promise.all([
+				videoDetail(current, project, detailOptions(input)),
+				posterFor(current),
+				unreadReviews({ videoId: current.id }),
+				latestReview(current.id),
+			]);
+			return {
+				video: { ...detail, thumbnailAssetId: current.thumbnailAssetId ?? undefined, poster },
+				...(latest ? { review: reviewSummary(latest) } : {}),
+				...(unread.length ? { feedback: `The person sent review notes (${unread.map((review) => `${review.id}: ${review.verdict}`).join(", ")}). Read them with review.get.` } : {}),
+			};
 		},
 	}),
 

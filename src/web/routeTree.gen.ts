@@ -18,6 +18,7 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppAccountRouteRouteImport } from './routes/_app/account/route'
 import { Route as AppAdminRouteImport } from './routes/_app/admin'
 import { Route as AppConnectRouteImport } from './routes/_app/connect'
+import { Route as ReviewReviewIdRouteImport } from './routes/review.$reviewId'
 import { Route as AppAccountIndexRouteImport } from './routes/_app/account/index'
 import { Route as AppAccountSessionsRouteImport } from './routes/_app/account/sessions'
 import { Route as AppAccountSpendingRouteImport } from './routes/_app/account/spending'
@@ -75,6 +76,11 @@ const AppConnectRoute = AppConnectRouteImport.update({
   id: '/connect',
   path: '/connect',
   getParentRoute: () => AppRoute,
+} as any)
+const ReviewReviewIdRoute = ReviewReviewIdRouteImport.update({
+  id: '/review/$reviewId',
+  path: '/review/$reviewId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const AppAccountIndexRoute = AppAccountIndexRouteImport.update({
   id: '/',
@@ -159,6 +165,7 @@ export interface FileRoutesByFullPath {
   '/account': typeof AppAccountRouteRouteWithChildren
   '/admin': typeof AppAdminRoute
   '/connect': typeof AppConnectRoute
+  '/review/$reviewId': typeof ReviewReviewIdRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRouteRouteWithChildren
   '/account/sessions': typeof AppAccountSessionsRoute
   '/account/spending': typeof AppAccountSpendingRoute
@@ -180,6 +187,7 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/admin': typeof AppAdminRoute
   '/connect': typeof AppConnectRoute
+  '/review/$reviewId': typeof ReviewReviewIdRoute
   '/projects/$projectId': typeof AppProjectsProjectIdTabsIndexRoute
   '/account/sessions': typeof AppAccountSessionsRoute
   '/account/spending': typeof AppAccountSpendingRoute
@@ -202,6 +210,7 @@ export interface FileRoutesById {
   '/_app/account': typeof AppAccountRouteRouteWithChildren
   '/_app/admin': typeof AppAdminRoute
   '/_app/connect': typeof AppConnectRoute
+  '/review/$reviewId': typeof ReviewReviewIdRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRouteRouteWithChildren
   '/_app/account/sessions': typeof AppAccountSessionsRoute
   '/_app/account/spending': typeof AppAccountSpendingRoute
@@ -227,6 +236,7 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/connect'
+    | '/review/$reviewId'
     | '/projects/$projectId'
     | '/account/sessions'
     | '/account/spending'
@@ -248,6 +258,7 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin'
     | '/connect'
+    | '/review/$reviewId'
     | '/projects/$projectId'
     | '/account/sessions'
     | '/account/spending'
@@ -269,6 +280,7 @@ export interface FileRouteTypes {
     | '/_app/account'
     | '/_app/admin'
     | '/_app/connect'
+    | '/review/$reviewId'
     | '/_app/projects/$projectId'
     | '/_app/account/sessions'
     | '/_app/account/spending'
@@ -291,6 +303,7 @@ export interface RootRouteChildren {
   ConsentRoute: typeof ConsentRoute
   DeviceRoute: typeof DeviceRoute
   SignInRoute: typeof SignInRoute
+  ReviewReviewIdRoute: typeof ReviewReviewIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -357,6 +370,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/connect'
       preLoaderRoute: typeof AppConnectRouteImport
       parentRoute: typeof AppRoute
+    }
+    '/review/$reviewId': {
+      id: '/review/$reviewId'
+      path: '/review/$reviewId'
+      fullPath: '/review/$reviewId'
+      preLoaderRoute: typeof ReviewReviewIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_app/account/': {
       id: '/_app/account/'
@@ -550,6 +570,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConsentRoute: ConsentRoute,
   DeviceRoute: DeviceRoute,
   SignInRoute: SignInRoute,
+  ReviewReviewIdRoute: ReviewReviewIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

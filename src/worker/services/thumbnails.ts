@@ -273,9 +273,14 @@ export async function setThumbnail(project: Project, video: Video, assetId: stri
 	return notes;
 }
 
-/** The poster for a video: its thumbnail, else the latest finished render's opening still in the video's shape (or any shape). */
-export async function posterFor(video: Pick<Video, "id" | "aspect" | "thumbnailAssetId" | "projectId">, expiresIn = 24 * 3600): Promise<{ url: string; source: "thumbnail" | "render" } | undefined> {
-	if (video.thumbnailAssetId) {
+/** The poster for a video: its thumbnail (for a 16:9 picture), else the latest finished render's opening still in that shape. */
+export async function posterFor(
+	video: Pick<Video, "id" | "aspect" | "thumbnailAssetId" | "projectId">,
+	expiresIn = 24 * 3600,
+	/** The shape the poster is for. A 16:9 thumbnail only stands in for a 16:9 picture. */
+	aspect: Video["aspect"] = video.aspect,
+): Promise<{ url: string; source: "thumbnail" | "render" } | undefined> {
+	if (video.thumbnailAssetId && aspect === "16:9") {
 		const asset = (await assetsById(video.projectId, [video.thumbnailAssetId])).get(video.thumbnailAssetId);
 		if (asset?.status === "ready" && asset.r2Key) return { url: await signedUrl(asset.r2Key, { expiresIn }), source: "thumbnail" };
 	}
@@ -285,7 +290,7 @@ export async function posterFor(video: Pick<Video, "id" | "aspect" | "thumbnailA
 		orderBy: desc(schema.renders.createdAt),
 		limit: 20,
 	});
-	const pick = renders.find((render) => render.posterKey && render.aspect === video.aspect) ?? renders.find((render) => render.posterKey);
+	const pick = renders.find((render) => render.posterKey && render.aspect === aspect) ?? (aspect === video.aspect ? renders.find((render) => render.posterKey) : undefined);
 	return pick?.posterKey ? { url: await signedUrl(pick.posterKey, { expiresIn }), source: "render" } : undefined;
 }
 

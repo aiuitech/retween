@@ -2,10 +2,11 @@
  * The project brief: one document an agent reads before making anything, so
  * that the hundredth video matches the first.
  */
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import type { BrandKit } from "../../../shared/brand.ts";
 import { db, schema } from "../db/client.ts";
 import { type Project, brandCompleteness } from "./projects.ts";
+import { unreadReviews } from "./reviews.ts";
 
 const humanise = (key: string) =>
 	key
@@ -100,6 +101,16 @@ export async function projectBrief(project: Project): Promise<string> {
 			lines.push(`- \`${asset.id}\` ${asset.name} (${details.join(", ")})${asset.description ? `: ${asset.description}` : ""}`);
 		}
 		if (reusable.length > 60) lines.push(`- …and ${reusable.length - 60} more (asset.list)`);
+		lines.push("");
+	}
+
+	const waiting = await unreadReviews({ projectId: project.id });
+	if (waiting.length) {
+		const titles = new Map(
+			(await db.query.videos.findMany({ where: inArray(schema.videos.id, waiting.map((review) => review.videoId)), columns: { id: true, title: true } })).map((video) => [video.id, video.title]),
+		);
+		lines.push("## Feedback waiting", "", "The person reviewed these videos and their notes have not been read yet. Read them with review.get before changing these videos:", "");
+		for (const review of waiting) lines.push(`- "${titles.get(review.videoId) ?? review.videoId}" (\`${review.videoId}\`): review \`${review.id}\`, ${review.verdict === "approved" ? "approved" : "changes asked for"}`);
 		lines.push("");
 	}
 
