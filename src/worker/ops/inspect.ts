@@ -28,7 +28,8 @@ import { and, desc, eq, ne } from "drizzle-orm";
 import { db, schema } from "../db/client.ts";
 import { getAsset } from "../services/assets.ts";
 import { checkReads } from "../services/listen.ts";
-import { type SheetTile, analyseAudio, draftStatus, inspectTimeline, renderSheet, startDraft } from "../services/inspect.ts";
+import { type SheetTile, analyseAudio, draftKey, draftStatus, inspectTimeline, renderSheet, startDraft } from "../services/inspect.ts";
+import { MAX_WATCH_SECONDS, watchDraft } from "../services/watch.ts";
 import type { Project } from "../services/projects.ts";
 import { signedUrl } from "../services/storage.ts";
 import { assertBudget } from "../services/usage.ts";
@@ -442,6 +443,65 @@ export const inspectOps = [
 				...range,
 				...(draft ? { draft: true, note: "Media is missing: timing is estimated, there is no voice yet and missing visuals show the brand backdrop." } : {}),
 				...(status.status === "rendering" ? { next: `Call video.draft again with draftId "${draftId}" to follow it.` } : {}),
+			};
+		},
+	}),
+
+	defineOp({
+		name: "video.review",
+		title: "Have a model watch it",
+		description:
+			"A video-capable model watches and listens to a draft of the video (or a stretch, up to 2 minutes) and returns timestamped notes by scene: " +
+			"the opening, how the narration actually sounds, music against the voice, pictures that do not match what is said or look wrong, text, pacing, transitions and the ending. " +
+			"It is the only check that hears the read and sees the motion; treat its notes as a colleague's opinion and confirm them (video.preview, video.draft) before acting. " +
+			"Run it after video.prepare. It cuts a draft first (a few seconds of the preview renderer), then costs a few cents. " +
+			"If the draft is still rendering when this returns, call again with the same draftId.",
+		input: z.object({
+			videoId,
+			sceneIds: z.array(z.string()).min(1).optional().describe("Watch from the first of these scenes to the end of the last"),
+			fromSeconds: z.number().min(0).optional(),
+			toSeconds: z.number().min(0).optional(),
+			focus: z.string().max(500).optional().describe("What to pay particular attention to, e.g. \"does the voice sound natural on the product names?\""),
+			draftId: z.string().regex(/^drf_/).optional().describe("Continue with a draft started by an earlier call"),
+			waitSeconds,
+		}),
+		paid: true,
+		handler: async (input, { actor }) => {
+			const { video, project } = await getVideo(actor, input.videoId);
+			const inspected = await inspectTimeline(video, project);
+			if (inspected.draft) throw new AppError(409, "Some media has not been generated yet, so there is nothing real to watch. Run video.prepare first.", "not_ready");
+			const { timeline } = inspected;
+			const frames = frameRange(timeline, input);
+			const seconds = (frames[1] - frames[0] + 1) / timeline.fps;
+			if (seconds > MAX_WATCH_SECONDS) throw badRequest(`It watches at most ${MAX_WATCH_SECONDS / 60} minutes at a time; this stretch is ${clock(seconds)}. Pick scenes or a range.`);
+			let draftId = input.draftId;
+			if (!draftId) {
+				await assertBudget(actor);
+				draftId = newId("drf");
+				await startDraft(actor, project, draftId, timeline, dimensionsFor(video.aspect, "480p"), frames);
+			}
+			const deadline = Date.now() + input.waitSeconds * 1000;
+			let status = await draftStatus(actor, project, video.id, draftId);
+			while (status.status === "rendering" && Date.now() < deadline) {
+				await new Promise((resolve) => setTimeout(resolve, 2000));
+				status = await draftStatus(actor, project, video.id, draftId);
+			}
+			if (status.status === "rendering") return { draftId, status: "rendering", progress: status.progress, next: `Call video.review again with draftId "${draftId}" (and the same range).` };
+			if (status.status === "failed") throw new AppError(502, `The draft could not be cut: ${status.error ?? "unknown error"}`, "preview_failed");
+			const result = await watchDraft({
+				key: draftKey(project.id, video.id, draftId),
+				timeline,
+				storyboard: inspected.storyboard,
+				frames,
+				focus: input.focus,
+				usage: { userId: actor.id, projectId: project.id, videoId: video.id },
+			});
+			return {
+				...result,
+				fromSec: round2(frames[0] / timeline.fps),
+				toSec: round2((frames[1] + 1) / timeline.fps),
+				draftUrl: status.url,
+				next: result.notes.length ? "Check the notes that matter (video.preview at their times, video.draft to watch), fix, and run it again." : "No notes.",
 			};
 		},
 	}),

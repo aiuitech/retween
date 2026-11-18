@@ -6,7 +6,7 @@
  */
 import { env } from "cloudflare:workers";
 import { OPENROUTER_VOICE_MODELS } from "../../../shared/audio-models.ts";
-import { AppError, base64ToBytes, isRateLimited, upstreamError, withRetry } from "../lib/util.ts";
+import { AppError, base64ToBytes, bytesToBase64, isRateLimited, upstreamError, withRetry } from "../lib/util.ts";
 import { musicTimeout } from "./elevenlabs.ts";
 
 const BASE = "https://openrouter.ai/api/v1";
@@ -371,4 +371,45 @@ async function lyria(input: { prompt: string; seconds: number; instrumental: boo
 	if (error) throw new AppError(502, `Music error: ${error}`, "upstream_error");
 	if (!base64) throw new AppError(502, "Music returned no audio", "upstream_error");
 	return { audio: base64ToBytes(base64), costUsd, generationId };
+}
+
+// --- watching a cut ------------------------------------------------------------------------
+
+/** Watches and listens: video and audio in, notes out. */
+export const REVIEW_MODEL = "google/gemini-3.8-flash";
+
+/**
+ * Asks a model that takes video to watch a clip (sent inline as a data URL,
+ * which every provider behind OpenRouter accepts) and answer as JSON.
+ */
+export async function watchVideo(input: { video: Uint8Array; system: string; prompt: string; model?: string }) {
+	const model = input.model ?? REVIEW_MODEL;
+	const response = await fetch(`${BASE}/chat/completions`, {
+		method: "POST",
+		headers: headers(),
+		body: JSON.stringify({
+			model,
+			response_format: { type: "json_object" },
+			messages: [
+				{ role: "system", content: input.system },
+				{
+					role: "user",
+					content: [
+						{ type: "text", text: input.prompt },
+						{ type: "video_url", video_url: { url: `data:video/mp4;base64,${bytesToBase64(input.video)}` } },
+					],
+				},
+			],
+			usage: { include: true },
+		}),
+	});
+	if (!response.ok) throw await upstreamError("Watching the draft", response);
+	const json = (await response.json()) as {
+		id?: string;
+		choices?: { message?: { content?: string } }[];
+		usage?: { cost?: number; prompt_tokens?: number; completion_tokens?: number };
+	};
+	const text = json.choices?.[0]?.message?.content ?? "";
+	if (!text) throw new AppError(502, "The reviewing model returned nothing", "upstream_error");
+	return { text, model, costUsd: json.usage?.cost, tokens: (json.usage?.prompt_tokens ?? 0) + (json.usage?.completion_tokens ?? 0), generationId: json.id };
 }
