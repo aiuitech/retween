@@ -211,6 +211,15 @@ export const TimelineContent = z.object({
 	showLogo: z.boolean().optional(),
 	chart: TimelineChart.optional(),
 	map: TimelineMap.optional(),
+	/** A layer drawn by the author's own code (see SceneCustom in storyboard.ts). `assets` values are sources like any other. */
+	custom: z
+		.object({
+			code: z.string(),
+			props: z.record(z.string(), z.unknown()).optional(),
+			assets: z.record(z.string(), z.string()).optional(),
+			layer: z.enum(["over", "under"]),
+		})
+		.optional(),
 });
 export type TimelineContent = z.infer<typeof TimelineContent>;
 
@@ -300,6 +309,7 @@ export function collectAssetRefs(timeline: Timeline): string[] {
 		if (bg.kind === "image") add(bg.cutout?.src);
 		add(scene.content.icon?.src);
 		for (const bullet of scene.content.bullets ?? []) add(bullet.icon?.src);
+		for (const src of Object.values(scene.content.custom?.assets ?? {})) add(src);
 	}
 	for (const clip of timeline.audio) add(clip.src);
 	return [...refs];
@@ -334,6 +344,9 @@ export function dropMissingAssetRefs(timeline: Timeline, available: (assetId: st
 					...scene.content,
 					icon: icon(scene.content.icon),
 					bullets: scene.content.bullets?.map((bullet) => ({ ...bullet, icon: icon(bullet.icon) })),
+					...(scene.content.custom
+						? { custom: { ...scene.content.custom, assets: Object.fromEntries(Object.entries(scene.content.custom.assets ?? {}).filter(([, src]) => ok(src))) } }
+						: {}),
 				},
 			};
 		}),
@@ -369,6 +382,9 @@ export function resolveAssetRefs(timeline: Timeline, resolve: (assetId: string) 
 					...scene.content,
 					icon: icon(scene.content.icon),
 					bullets: scene.content.bullets?.map((bullet) => ({ ...bullet, icon: icon(bullet.icon) })),
+					...(scene.content.custom
+						? { custom: { ...scene.content.custom, assets: Object.fromEntries(Object.entries(scene.content.custom.assets ?? {}).map(([name, src]) => [name, swap(src)])) } }
+						: {}),
 				},
 			};
 		}),

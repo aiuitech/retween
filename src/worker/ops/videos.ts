@@ -68,6 +68,7 @@ async function reviewStoryboard(video: Video, project: Project) {
 		scene.visual?.firstFrameAssetId,
 		...(scene.visual?.referenceAssetIds ?? []),
 		...(scene.sfx ?? []).map((effect) => effect.assetId),
+		...Object.values(scene.custom?.assets ?? {}),
 	]);
 	if (board.music?.assetId) referenced.push(board.music.assetId);
 	const ids = referenced.filter((id): id is string => Boolean(id));

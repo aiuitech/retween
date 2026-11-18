@@ -246,6 +246,29 @@ export const SceneFootage = z.object({
 });
 export type SceneFootage = z.infer<typeof SceneFootage>;
 
+/** Longest custom layer, in characters of code. */
+export const MAX_CUSTOM_CODE = 20_000;
+
+export const SceneCustom = z.object({
+	code: z
+		.string()
+		.min(1)
+		.max(MAX_CUSTOM_CODE)
+		.describe(
+			"Plain JavaScript: the body of a function called once per frame that returns what to draw, built with h(type, props, ...children) (React.createElement). " +
+				"These names are in scope (and also on the one argument, api): { frame, fps, durationInFrames, seconds (frame / fps), width, height, u (px per design px at a 1080 short side), " +
+				"colors (the brand palette: primary, secondary, accent, background, surface, text, mutedText), fonts { heading, body } (CSS font stacks), " +
+				"words (the scene's spoken words: { text, start, end } in seconds from the scene start), props (your props), assets (name → URL of each assets entry), " +
+				"interpolate(value, [in…], [out…], { clamp }) , spring(frame, { damping, stiffness, mass, delay }) (0 → 1), ease(t) (smooth 0–1), random(seed) (repeatable 0–1), h, Img }. " +
+				"Position with absolute CSS in px of width × height; animate from frame only (no timers, no Date, no fetch): every frame must come out the same every time. " +
+				"Example: const p = spring(frame, { delay: 6 }); return h('div', { style: { position: 'absolute', left: 120 * u, top: height / 2, fontFamily: fonts.heading, fontSize: 96 * u, color: colors.accent, opacity: p, transform: `translateY(${(1 - p) * 40 * u}px)` } }, props.label);",
+		),
+	props: z.record(z.string(), z.unknown()).optional().describe("Values your code reads as props (labels, numbers, colours)"),
+	assets: z.record(z.string().max(40), z.string()).optional().describe("Images it draws, by name: { name: assetId }. Read their URLs from assets.name and draw them with h(Img, { src })"),
+	layer: z.enum(["over", "under"]).optional().describe("over (default): above the scene's text. under: above the picture but beneath the text"),
+});
+export type SceneCustom = z.infer<typeof SceneCustom>;
+
 export const Scene = z.object({
 	id: z
 		.string()
@@ -294,6 +317,9 @@ export const Scene = z.object({
 		.optional()
 		.describe("Narrate this scene with a different voice or pace"),
 	sfx: z.array(SceneSfx).max(4).optional(),
+	custom: SceneCustom.optional().describe(
+		"A motion layer you write yourself, drawn over the scene's picture and text: for a diagram, a kinetic-type moment or an animation no scene type has. See SceneCustom.code. Use a media scene with no text for a fully custom scene",
+	),
 	notes: z.string().max(2000).optional().describe("Director's notes, never shown"),
 });
 export type Scene = z.infer<typeof Scene>;

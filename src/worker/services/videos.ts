@@ -50,6 +50,7 @@ function referencedAssetIds(storyboard: Storyboard, resolved: ResolvedMedia, bra
 		ids.add(scene.visual?.assetId);
 		ids.add(scene.footage?.assetId);
 		for (const effect of scene.sfx ?? []) ids.add(effect.assetId);
+		for (const assetId of Object.values(scene.custom?.assets ?? {})) ids.add(assetId);
 	}
 	for (const group of [resolved.narration, resolved.visual, resolved.sfx, resolved.icons ?? {}, resolved.cutout ?? {}]) {
 		for (const entry of Object.values(group)) ids.add(entry.assetId);

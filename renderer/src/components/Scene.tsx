@@ -8,6 +8,7 @@ import { clamp01, progress } from "../lib/motion.ts";
 import type { TimelineContent, TimelineScene, TimelineTheme } from "../types.ts";
 import { Background, hasMedia, isStaged } from "./Background.tsx";
 import { Chart } from "./Chart.tsx";
+import { CustomLayer } from "./CustomLayer.tsx";
 import { FitBox } from "./FitBox.tsx";
 import { Icon } from "./Icon.tsx";
 import { MapScene } from "./MapScene.tsx";
@@ -604,6 +605,7 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 					<div style={{ position: "absolute", inset: 0, background: `rgba(0, 0, 0, ${scrim})` }} />
 				)
 			) : null}
+			{c.custom?.layer === "under" ? <CustomLayer scene={scene} custom={c.custom} /> : null}
 			{cornerLogo}
 			{parts.length > 0 ? (
 				<FitBox rect={region} u={u} justify={textPosition} align={align} maxWidth={columnMax} fitKey={fitKey} name={`${scene.id}/text`}>
@@ -615,6 +617,7 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 					<LowerThird content={c.lowerThird} start={enterDelay + Math.round(beat)} overMedia={overMedia} pal={pal} />
 				</FitBox>
 			) : null}
+			{c.custom && c.custom.layer !== "under" ? <CustomLayer scene={scene} custom={c.custom} /> : null}
 		</div>
 	);
 };

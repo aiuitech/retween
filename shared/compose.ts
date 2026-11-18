@@ -454,6 +454,16 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 				showLogo: text.showLogo ?? (scene.type === "outro" ? true : undefined),
 				chart,
 				map,
+				...(scene.custom
+					? {
+							custom: {
+								code: scene.custom.code,
+								props: scene.custom.props,
+								assets: Object.fromEntries(Object.entries(scene.custom.assets ?? {}).map(([name, assetId]) => [name, `asset://${assetId}`])),
+								layer: scene.custom.layer ?? "over",
+							},
+						}
+					: {}),
 			},
 		});
 		lastSpeaker = cut?.speaker ? { assetId: cut.assetId, endSec: cut.endSec, zoom: speakerZoom ?? 1 } : undefined;
