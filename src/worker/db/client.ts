@@ -30,8 +30,11 @@ function retryingStatement(statement: D1PreparedStatement, sql: string): D1Prepa
 	return proxy;
 }
 
-const database = new Proxy(env.DB, {
-	get(target, property) {
+// The binding is looked up on each access, not at module load: when the script is
+// validated on upload its bindings are not populated yet, and `new Proxy(undefined)` throws.
+const database = new Proxy({} as D1Database, {
+	get(_, property) {
+		const target = env.DB;
 		const value = Reflect.get(target, property);
 		if (property === "prepare") return (sql: string) => retryingStatement(target.prepare(sql), sql);
 		// The native batch only accepts its own statement objects.
