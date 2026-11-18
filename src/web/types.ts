@@ -135,5 +135,21 @@ export interface YoutubeUpload {
 	createdAt: string;
 }
 
+export interface HostedVideo {
+	id: string;
+	renderId: string;
+	status: string;
+	enabled: boolean;
+	title: string;
+	pageUrl: string;
+	embedUrl: string;
+	embedCode?: string;
+	captions?: string;
+	allowedOrigins: string[];
+	error?: string;
+	warnings?: string[];
+	createdAt: string;
+}
+
 export const ASPECTS = ["16:9", "9:16", "1:1", "4:5"] as const;
 export const RESOLUTIONS = ["480p", "720p", "1080p", "1440p", "2160p"] as const;

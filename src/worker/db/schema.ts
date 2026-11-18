@@ -254,7 +254,7 @@ export const renders = sqliteTable(
 	(t) => [index("renders_video_idx").on(t.videoId), index("renders_project_idx").on(t.projectId)],
 );
 
-export type UsageKind = "image" | "video" | "speech" | "music" | "sfx" | "transcription" | "render" | "preview" | "footage" | "storage";
+export type UsageKind = "image" | "video" | "speech" | "music" | "sfx" | "transcription" | "render" | "preview" | "footage" | "storage" | "hosting" | "streaming";
 
 /**
  * How a usage event's cost was arrived at, from most to least exact:
@@ -385,6 +385,65 @@ export const youtubeUploads = sqliteTable(
 		finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
 	},
 	(t) => [index("youtube_uploads_video_idx").on(t.videoId), index("youtube_uploads_user_idx").on(t.userId)],
+);
+
+export type HostedStatus = "queued" | "uploading" | "processing" | "ready" | "failed";
+
+/**
+ * A render hosted by Retween on Cloudflare Stream, played from its watch page
+ * (/v/<id>) and its embed (/embed/<id>). The Stream copy requires signed URLs,
+ * so it only plays through those pages, which hand out a short-lived token per
+ * view and stop doing so when the owner's account cannot be billed.
+ *
+ * No foreign keys on purpose: a row must outlive the video, project or account
+ * it came from until its Stream copy is deleted, or that copy would be stored
+ * at our cost with nobody to bill. The nightly sweep (services/hosting.ts)
+ * deletes copies whose video is gone.
+ */
+export const hostedVideos = sqliteTable(
+	"hosted_videos",
+	{
+		/** hst_…, also the public id in the page and embed URLs. */
+		id: text("id").primaryKey(),
+		userId: text("user_id").notNull(),
+		projectId: text("project_id").notNull(),
+		videoId: text("video_id").notNull(),
+		renderId: text("render_id").notNull(),
+		status: text("status").$type<HostedStatus>().notNull().default("queued"),
+		/** Cloudflare Stream's id for the copy, once it has one. */
+		streamUid: text("stream_uid"),
+		/** The account's Stream playback origin (https://customer-<code>.cloudflarestream.com). */
+		streamHost: text("stream_host"),
+		title: text("title").notNull(),
+		description: text("description").notNull().default(""),
+		/** BCP 47 language of the captions, when they were added. */
+		captionsLanguage: text("captions_language"),
+		/** Shown on the watch page, with times, as they were when the video was hosted. */
+		chapters: text("chapters", { mode: "json" }).$type<{ atSec: number; title: string }[]>().notNull().default([]),
+		/** Credit lines owed for third-party media, shown on the watch page. */
+		credits: text("credits", { mode: "json" }).$type<string[]>().notNull().default([]),
+		/** The image shown before playing and in link previews: the video's thumbnail, else the export's poster. */
+		posterKey: text("poster_key"),
+		/** Sites allowed to embed it (CSP frame-ancestors origins). Empty: anywhere. */
+		allowedOrigins: text("allowed_origins", { mode: "json" }).$type<string[]>().notNull().default([]),
+		/** Paused by the owner: the pages say it is unavailable and nothing plays. */
+		enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+		width: integer("width").notNull(),
+		height: integer("height").notNull(),
+		/** As Stream measured it once processed: what storage is billed on. */
+		durationSec: real("duration_sec"),
+		error: text("error"),
+		warnings: text("warnings", { mode: "json" }).$type<string[]>().notNull().default([]),
+		createdAt: createdAt(),
+		readyAt: integer("ready_at", { mode: "timestamp_ms" }),
+		updatedAt: updatedAt(),
+	},
+	(t) => [
+		index("hosted_videos_video_idx").on(t.videoId),
+		index("hosted_videos_user_idx").on(t.userId),
+		index("hosted_videos_project_idx").on(t.projectId),
+		uniqueIndex("hosted_videos_stream_idx").on(t.streamUid),
+	],
 );
 
 export const REVIEW_VERDICTS = ["approved", "changes"] as const;

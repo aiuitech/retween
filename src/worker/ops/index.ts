@@ -6,6 +6,7 @@ import { adminOps } from "./admin.ts";
 import { assetOps } from "./assets.ts";
 import { billingOps } from "./billing.ts";
 import { footageOps } from "./footage.ts";
+import { hostingOps } from "./hosting.ts";
 import { inspectOps } from "./inspect.ts";
 import { projectOps } from "./projects.ts";
 import { type Op, invokeOp } from "./registry.ts";
@@ -14,7 +15,7 @@ import { thumbnailOps } from "./thumbnails.ts";
 import { videoOps } from "./videos.ts";
 import { youtubeOps } from "./youtube.ts";
 
-export const ops: Op[] = [...projectOps, ...accountOps, ...billingOps, ...assetOps, ...footageOps, ...videoOps, ...inspectOps, ...thumbnailOps, ...reviewOps, ...youtubeOps, ...adminOps];
+export const ops: Op[] = [...projectOps, ...accountOps, ...billingOps, ...assetOps, ...footageOps, ...videoOps, ...inspectOps, ...thumbnailOps, ...reviewOps, ...youtubeOps, ...hostingOps, ...adminOps];
 const byName = new Map(ops.map((op) => [op.name, op]));
 
 /** Operations the actor is allowed to see. */

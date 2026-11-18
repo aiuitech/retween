@@ -5,6 +5,7 @@ import { db, schema } from "../db/client.ts";
 import { NOTE_KINDS } from "../db/schema.ts";
 import { badRequest, newId, notFound } from "../lib/util.ts";
 import { deletePrefix } from "../services/storage.ts";
+import { removeHostedFor } from "../services/hosting.ts";
 import { WORKFLOW_GUIDE, projectBrief } from "../services/brief.ts";
 import { CRAFT, CRAFT_TOPICS, craftTopic } from "../services/craft.ts";
 import { brandCompleteness, getProject, listProjects, projectSummary } from "../services/projects.ts";
@@ -114,13 +115,14 @@ export const projectOps = [
 	defineOp({
 		name: "project.delete",
 		title: "Delete project",
-		description: "Permanently delete a project with all of its assets, videos and renders. Cannot be undone.",
+		description: "Permanently delete a project with all of its assets, videos, renders and hosted videos. Cannot be undone.",
 		input: z.object({ projectId, confirm: z.literal(true).describe("Must be true") }),
 		destructive: true,
 		handler: async (input, { actor }) => {
 			const project = await getProject(actor, input.projectId);
 			// Everything a project stores lives under one prefix: assets, renders and preview frames.
 			const files = await deletePrefix(`projects/${project.id}/`);
+			await removeHostedFor({ projectId: project.id });
 			await db.delete(schema.projects).where(eq(schema.projects.id, project.id));
 			return { deleted: project.id, files };
 		},

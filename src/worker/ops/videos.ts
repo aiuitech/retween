@@ -14,6 +14,7 @@ import { checkpointsFor, deleteCheckpoints, difference, getCheckpoint, protected
 import { posterFor } from "../services/thumbnails.ts";
 import { createRender, freshTimeline, getRender, renderView } from "../services/renders.ts";
 import { deletePrefix } from "../services/storage.ts";
+import { removeHostedFor } from "../services/hosting.ts";
 import { getControls, limitResolution } from "../services/controls.ts";
 import { assertBudget, projectVideoSpend } from "../services/usage.ts";
 import {
@@ -244,7 +245,7 @@ export const videoOps = [
 	defineOp({
 		name: "video.delete",
 		title: "Delete video",
-		description: "Permanently delete a video, its renders and the media generated for its scenes.",
+		description: "Permanently delete a video, its renders, its hosted copies and the media generated for its scenes.",
 		input: z.object({ videoId }),
 		destructive: true,
 		handler: async (input, { actor }) => {
@@ -265,6 +266,8 @@ export const videoOps = [
 			for (const asset of assets) if (asset.r2Key) keys.push(asset.r2Key);
 			if (keys.length) await env.MEDIA.delete(keys);
 			await deletePrefix(`projects/${project.id}/previews/${video.id}-`);
+			// Hosted copies stop playing and stop being stored with it.
+			await removeHostedFor({ videoId: video.id });
 			for (const asset of assets) await db.delete(schema.assets).where(eq(schema.assets.id, asset.id));
 			await db.delete(schema.videos).where(eq(schema.videos.id, video.id));
 			return { deleted: video.id };

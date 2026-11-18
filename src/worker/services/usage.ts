@@ -27,6 +27,13 @@ export interface UsageEvent {
 	 * charge again (same key) is ignored. Use the vendor's request id where there is one.
 	 */
 	dedupeKey?: string;
+	/** When the usage happened, if not now: metered usage recorded after the day it belongs to. Invoices are by month of this time. */
+	at?: Date;
+	/**
+	 * With a dedupeKey: a second recording replaces the first instead of being ignored. For figures
+	 * that are measured again later (a day's delivered minutes, once the analytics have caught up).
+	 */
+	replace?: boolean;
 }
 
 /**
@@ -36,7 +43,9 @@ export interface UsageEvent {
  */
 export async function recordUsage(event: UsageEvent): Promise<void> {
 	const id = event.dedupeKey ? `use_${(await sha256Hex(event.dedupeKey)).slice(0, 24)}` : newId("use");
-	await db
+	const quantity = Math.round(event.quantity);
+	const costMicros = Math.round(Math.max(0, event.costUsd) * 1_000_000);
+	const insert = db
 		.insert(schema.usageEvents)
 		.values({
 			id,
@@ -46,15 +55,18 @@ export async function recordUsage(event: UsageEvent): Promise<void> {
 			kind: event.kind,
 			provider: event.provider,
 			model: event.model,
-			quantity: Math.round(event.quantity),
+			quantity,
 			unit: event.unit,
-			costMicros: Math.round(Math.max(0, event.costUsd) * 1_000_000),
+			costMicros,
 			estimated: event.basis === "list",
 			basis: event.basis,
 			ref: event.ref,
 			vendorRef: event.vendorRef,
-		})
-		.onConflictDoNothing();
+			...(event.at ? { createdAt: event.at } : {}),
+		});
+	await (event.replace && event.dedupeKey
+		? insert.onConflictDoUpdate({ target: schema.usageEvents.id, set: { quantity, costMicros, basis: event.basis, estimated: event.basis === "list" } })
+		: insert.onConflictDoNothing());
 }
 
 /** Vendor cost so far this calendar month (UTC), before markup, in millionths of a dollar. */
@@ -140,6 +152,22 @@ export async function budgetStatus(user: { id: string; monthlyBudgetCents: numbe
 		estimatedBillUsd: dollars(payableMicros),
 		remainingUsd: Math.max(0, dollars(limit.cents * 10_000 - payableMicros)),
 	};
+}
+
+/**
+ * Why a hosted video of this account should not play right now, or null when it may.
+ * Plays are billed to the owner, so they stop when the owner could not be billed for
+ * them: a suspended account, no payment method, an unpaid invoice, or the month's cap reached.
+ */
+export async function playbackBlocked(userId: string): Promise<string | null> {
+	const user = await db.query.user.findFirst({ where: eq(schema.user.id, userId) });
+	if (!user) return "gone";
+	if (user.banned && (!user.banExpires || user.banExpires > new Date())) return "suspended";
+	if ((user.role ?? "").split(",").includes("admin")) return null;
+	if (user.billingStatus === "past_due") return "payment_past_due";
+	if (user.billingStatus !== "active") return "billing_required";
+	const { payableMicros, limit } = await standing({ id: user.id, monthlyBudgetCents: user.monthlyBudgetCents ?? 0 });
+	return payableMicros >= limit.cents * 10_000 ? "budget_exceeded" : null;
 }
 
 /** Refuses paid work once the month's cap (or the account's own lower limit) is reached, or while an invoice is unpaid. */

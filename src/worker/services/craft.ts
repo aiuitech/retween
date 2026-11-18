@@ -81,14 +81,15 @@ export const CRAFT: CraftTopic[] = [
 	{
 		topic: "publishing",
 		title: "Publishing",
-		summary: "Preflight, approval, title and description, chapters, disclosure, private first.",
+		summary: "Preflight, approval, title and description, chapters, disclosure, private first, hosting on the web.",
 		body: `Getting a good video in front of people without surprises.
 
 - Run youtube.preflight first: it says whether the video will be a Short, whether the export is the current cut, whether the person approved it, and what is missing (thumbnail, chapters).
 - Get the person's approval of the cut (review.request) before anything goes beyond private. youtube.publish refuses unlisted, public or scheduled uploads without it.
 - Title: specific and honest, the topic up front, under about 60 characters so it is not cut off. Description: the first two lines show in search, so say what the video is and who it is for; chapters and required credits are added for you.
 - Disclose realistic synthetic media honestly (containsSyntheticMedia). Preflight suggests an answer from the media; generated photoreal clips or a cloned voice mean yes. Stylised graphics, stock and a narrator voice do not.
-- Upload private by default and let the person publish, unless they asked for it to go out.`,
+- Upload private by default and let the person publish, unless they asked for it to go out.
+- For the person's own site, a landing page or a client, hosting.publish gives a watch page and an embed with no ads or suggested videos. Host the shape the page shows (16:9 for most sites, 9:16 for phones), and list allowedOrigins when only their sites should embed it.`,
 	},
 	{
 		topic: "originality",

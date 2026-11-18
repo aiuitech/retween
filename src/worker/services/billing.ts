@@ -51,6 +51,8 @@ export const KIND_LABELS: Record<UsageKind, string> = {
 	preview: "Previews and checks",
 	footage: "Footage processing",
 	storage: "Storage",
+	hosting: "Hosted video storage",
+	streaming: "Hosted video plays",
 };
 
 // ------------------------------------------------------------------ periods

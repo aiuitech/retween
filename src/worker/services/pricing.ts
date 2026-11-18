@@ -66,3 +66,13 @@ export const containerUsdPerSecond = () =>
 
 /** R2 Standard storage (https://developers.cloudflare.com/r2/pricing/). Operations are a rounding error and are not charged. */
 export const R2_USD_PER_GB_MONTH = 0.015;
+
+/**
+ * Cloudflare Stream (https://developers.cloudflare.com/stream/pricing/): storage by the minute of video
+ * (rounded up to the second, whatever the file size), delivery by the minute played. Encoding and ingress are free.
+ * Storage is bought in prepaid blocks of 1,000 minutes a month; accounts are charged the marginal rate.
+ */
+export const STREAM = {
+	usdPerMinuteStoredMonth: 5 / 1000,
+	usdPerMinuteDelivered: 1 / 1000,
+};

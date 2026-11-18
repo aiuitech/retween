@@ -27,7 +27,8 @@ export default defineConfig(({ mode }) => {
 			previewUrls: false,
 			observability: { enabled: true },
 			limits: { cpuMs: 300_000 },
-			// Nightly: charge each account a day of storage (services/metering.ts), reconcile costs,
+			// Nightly: charge each account a day of storage (services/metering.ts) and of hosted videos' storage and plays
+			// (services/hosting.ts), reconcile costs,
 			// and from the 2nd of the month invoice the month that closed (services/billing.ts).
 			triggers: [triggers.scheduled({ schedule: "10 0 * * *" })],
 			env: {
@@ -55,6 +56,9 @@ export default defineConfig(({ mode }) => {
 				RENDER_WORKFLOW: bindings.workflow({ name: "retween-render", worker: WORKER, exportName: "RenderWorkflow" }),
 				PUBLISH_WORKFLOW: bindings.workflow({ name: "retween-publish", worker: WORKER, exportName: "PublishWorkflow" }),
 				FOOTAGE_WORKFLOW: bindings.workflow({ name: "retween-footage", worker: WORKER, exportName: "FootageWorkflow" }),
+				HOSTING_WORKFLOW: bindings.workflow({ name: "retween-hosting", worker: WORKER, exportName: "HostingWorkflow" }),
+				/** Hosted videos (services/hosting.ts): copies of renders played from /v/<id> and /embed/<id>. */
+				STREAM: bindings.stream(),
 
 				BETTER_AUTH_SECRET: bindings.secret(),
 				GOOGLE_CLIENT_ID: bindings.secret(),
@@ -73,6 +77,7 @@ export default defineConfig(({ mode }) => {
 				RenderWorkflow: exports.workflow({ name: "retween-render" }),
 				PublishWorkflow: exports.workflow({ name: "retween-publish" }),
 				FootageWorkflow: exports.workflow({ name: "retween-footage" }),
+				HostingWorkflow: exports.workflow({ name: "retween-hosting" }),
 			},
 		},
 		containers: dev ? [] : [renderer],

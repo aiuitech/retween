@@ -14,6 +14,8 @@ import { afterUpload } from "./services/footage.ts";
 import { getProject } from "./services/projects.ts";
 import { contentTypeFor, kindFor, serveObject, verifySignedUrl, verifyUploadUrl } from "./services/storage.ts";
 import { accrueStorage } from "./services/metering.ts";
+import { meterHosting } from "./services/hosting.ts";
+import { embedPage, oembed, posterImage, watchPage } from "./services/hosting-pages.ts";
 import { reconcileContainers, reconcileFal } from "./services/reconcile.ts";
 import { abortMultipart, completeMultipart, startMultipart, uploadPart } from "./services/uploads.ts";
 import { completeCheckout, handleStripeEvent, invoiceClosedMonth, portalUrl, setupCheckoutUrl, verifyWebhook } from "./services/billing.ts";
@@ -23,6 +25,7 @@ import { connectState, readConnectState, saveChannel } from "./services/youtube.
 export { Renderer } from "./renderer.ts";
 export { AssetWorkflow } from "./workflows/asset.ts";
 export { FootageWorkflow } from "./workflows/footage.ts";
+export { HostingWorkflow } from "./workflows/hosting.ts";
 export { PipelineWorkflow } from "./workflows/pipeline.ts";
 export { PublishWorkflow } from "./workflows/publish.ts";
 export { RenderWorkflow } from "./workflows/render.ts";
@@ -332,6 +335,14 @@ app.post("/api/stripe/webhook", async (c) => {
 	return c.json({ ok: true });
 });
 
+// ------------------------------------------------------------ Hosted videos
+
+/** Public: the watch page, the embed and the poster of a hosted video, and oEmbed for link previews in other apps. */
+app.get("/v/:id", (c) => watchPage(c.req.param("id")));
+app.get("/v/:id/poster", (c) => posterImage(c.req.param("id"), c.req.raw));
+app.get("/embed/:id", (c) => embedPage(c.req.param("id")));
+app.get("/api/oembed", (c) => oembed(c.req.raw));
+
 app.all("/api/*", (c) => c.json({ ok: false, error: { code: "not_found", message: "No such endpoint" } }, 404));
 
 // Everything else is the web app: pages and its server functions (src/web).
@@ -340,7 +351,7 @@ app.all("*", (c) => start.fetch(c.req.raw));
 export default {
 	fetch: app.fetch,
 	/**
-	 * Nightly: charge the day that just ended for storage, replace metered costs
+	 * Nightly: charge the day that just ended for storage and hosted videos (storage and plays), replace metered costs
 	 * with billed ones where the vendors have them, then (from the 2nd) invoice last month. Each job runs on its own,
 	 * so one failing does not stop the others.
 	 */
@@ -348,6 +359,8 @@ export default {
 		const day = new Date(controller.scheduledTime - 24 * 60 * 60 * 1000);
 		const jobs: [string, () => Promise<unknown>][] = [
 			["storage", () => accrueStorage(day)],
+			// Before invoicing: it charges the last two days' plays, which on the 2nd includes the closed month's last day.
+			["hosting", () => meterHosting(new Date(controller.scheduledTime))],
 			["fal reconciliation", reconcileFal],
 			["container reconciliation", reconcileContainers],
 			// After reconciliation, so the closed month is billed at what the vendors charged.

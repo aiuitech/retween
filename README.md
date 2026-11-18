@@ -72,7 +72,7 @@ Sheets are a second Remotion composition (`renderer/src/Sheet.tsx`): each tile i
 
 A scene uses a stretch of a recording with `footage: { assetId, from, to }`. `from` and `to` are quoted words (or seconds), and the cut is placed in the pauses around them, frame-aligned so picture and voice start together. The scene lasts exactly that long, and its captions, bullet, chart and map cues, and music ducking follow the recording. `show: "speaker"` makes the footage the scene's picture (beside the text in a split scene), muted, with the voice track playing as the narration. Back-to-back cuts from one recording alternate between 1× and 1.12× zoom to hide the jump. `show: "voice"` plays the person over the scene's own visual, as b-roll. Any picture or footage can also take a `look`: brightness, contrast, saturation, temperature, grayscale, blur and vignette. Video visuals take a `speed`.
 
-**Infrastructure.** Worker + static assets, D1 (`retween`), R2 (`retween-media`, private; files are served through signed URLs), five Workflows (asset, pipeline, render, publish, footage), and a Durable Object-backed Container (`standard-4`, one instance per render, stopped when the render finishes).
+**Infrastructure.** Worker + static assets, D1 (`retween`), R2 (`retween-media`, private; files are served through signed URLs), six Workflows (asset, pipeline, render, publish, footage, hosting), Cloudflare Stream for hosted videos, and a Durable Object-backed Container (`standard-4`, one instance per render, stopped when the render finishes).
 
 **Thumbnails and posters.** `thumbnail.design` draws up to three variants with the video's own renderer (a `thumbnail` tile kind in the `Sheet` composition: a one-frame-per-variant timeline of scene pictures without their text, with `ThumbnailOverlay` drawn over it) and shows each at full size and at feed sizes with the duration badge. `choose` saves one as a 1280×720 JPEG under 2 MB (`videos.thumbnail_asset_id`); `youtube.publish` sends it by default. Each render also takes a poster still of its opening before its container stops (`renders.poster_key`). Contracts are in `shared/thumbnail.ts`; constants the Remotion bundle needs are in the import-free `shared/thumbnail-layout.ts`, because the bundle cannot resolve `zod` from `shared/` inside the image.
 
@@ -128,6 +128,19 @@ It uses the same Google OAuth client as sign-in, asking separately for the `yout
 
 Quota: uploads have their own allowance of 100 a day per Cloud project. Captions cost 400 units each, and thumbnails and playlist additions 50 each, out of the shared 10,000 units a day.
 
+## Hosting
+
+`hosting.publish` copies a finished render to Cloudflare Stream (the `STREAM` binding) through the `retween-hosting` Workflow: Stream fetches the file from a signed R2 link, the workflow waits for it to be processed, then adds WebVTT captions timed to the narration. Each copy gets a watch page at `/v/<id>` (themed with the brand's palette, with the thumbnail as poster, chapters that seek, credits, Open Graph and Twitter player tags) and an embed at `/embed/<id>`; `embedCode` is a responsive iframe for it, and `/api/oembed` lets CMSs, Notion and Slack unfurl a watch page link. `allowedOrigins` limits which sites may embed it (`frame-ancestors`). The web app shows them on an export's page under "On the web".
+
+Copies require signed URLs, so they only play through these pages, which ask Stream for a one-hour token per view. That is how playback is governed: the pages stop handing out tokens while the owner pauses the video (`hosting.update enabled: false`), or the owner's account is suspended, has no payment method, has an unpaid invoice or is over its monthly cap (`playbackBlocked` in `services/usage.ts`).
+
+Billing is at cost × markup like everything else, from two ledger kinds written by the nightly cron (`services/hosting.ts`), before invoicing:
+
+- `hosting`: one day of storage for every copy, per account, at $5 per 1,000 minutes a month (Stream bills by length, not size).
+- `streaming`: minutes delivered per copy at $1 per 1,000, from `streamMinutesViewedAdaptiveGroups` grouped by copy and `creator` (each copy's owner), so plays are charged even after a copy is deleted. The two days before each run are measured, recorded against the day they happened and replaced on the second pass, since analytics trail by a few minutes; on the 2nd this covers the closed month's last day before it is invoiced. Analytics are sampled, so this can differ slightly from Cloudflare's invoice.
+
+This needs `CLOUDFLARE_ANALYTICS_TOKEN` (Account Analytics: Read): without it plays could not be billed, so `hosting.publish` refuses. Deleting a video or project deletes its copies; a copy whose video is gone some other way (an account deleted) is removed by the nightly sweep. Stream storage is bought in prepaid blocks of 1,000 minutes on the Cloudflare account, so keep headroom there: uploads fail when it runs out.
+
 ## Access
 
 Anyone can sign in with Google. A new account can do nothing until it adds a payment method (`/billing`, a Stripe Checkout page in setup mode: nothing is charged then); the API answers `402 billing_required` with that link. Emails in `SUPERUSER_EMAILS` (`cloudflare.config.ts`) become administrators on first sign-in; administrators are never billed. Every account has a monthly spend cap in billed dollars (default $10, `DEFAULT_MONTHLY_BUDGET_CENTS`) that administrators can change per person, and an account can set its own lower limit in its cost controls.
@@ -155,6 +168,7 @@ Every vendor charge is written to the usage ledger (`usage_events`) against the 
 | fal | cut-outs, vector art | `metered`: `x-fal-billable-units` × the endpoint's price from fal's pricing API (`list` as a fallback) |
 | Cloudflare Containers | renders, preview frames | `metered`: container run time from start to stop (measured in `Renderer`), including the idle time before it sleeps |
 | Cloudflare R2 | stored assets and renders | `metered`: a nightly cron charges each account one day of storage |
+| Cloudflare Stream | hosted videos | `metered`: a nightly cron charges one day of each copy's length (`hosting`), and the minutes delivered per copy from Cloudflare's analytics (`streaming`) |
 
 Rates that are not reported per request live in `src/worker/services/pricing.ts`; keep them in line with the invoices.
 

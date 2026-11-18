@@ -1,8 +1,8 @@
 import { Link, createFileRoute, getRouteApi, notFound, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { clock, op, sizeOf, whenExactly } from "../../../../../../../api.ts";
-import { DeleteRender, UploadLine, orNotFound } from "../../../../../../../forms.tsx";
-import type { RenderRow, YoutubeUpload } from "../../../../../../../types.ts";
+import { DeleteRender, HostedLine, UploadLine, orNotFound } from "../../../../../../../forms.tsx";
+import type { HostedVideo, RenderRow, YoutubeUpload } from "../../../../../../../types.ts";
 import { CopyId, Crumbs, Missing, StatusOf, Tween, isRunning, useAct, usePoll, useToast } from "../../../../../../../ui.tsx";
 
 const project = getRouteApi("/_app/projects/$projectId");
@@ -10,12 +10,17 @@ const video = getRouteApi("/_app/projects/$projectId/videos/$videoId");
 
 export const Route = createFileRoute("/_app/projects/$projectId/videos/$videoId/renders/$renderId")({
 	loader: async ({ params }) => {
-		const [{ render }, uploads] = await Promise.all([
+		const [{ render }, uploads, hosting] = await Promise.all([
 			op<{ render: RenderRow }>("render.get", { renderId: params.renderId }).catch(orNotFound),
 			op<{ uploads: YoutubeUpload[] }>("youtube.list", { videoId: params.videoId }).catch(() => ({ uploads: [] })),
+			op<{ hosted: HostedVideo[] }>("hosting.list", { videoId: params.videoId }).catch(() => ({ hosted: [] })),
 		]);
 		if (render.videoId !== params.videoId) throw notFound();
-		return { render, uploads: uploads.uploads.filter((upload) => upload.renderId === render.id) };
+		return {
+			render,
+			uploads: uploads.uploads.filter((upload) => upload.renderId === render.id),
+			hosted: hosting.hosted.filter((hosted) => hosted.renderId === render.id),
+		};
 	},
 	notFoundComponent: () => <Missing what="export">It may have been deleted. The video it was made from is still in its project.</Missing>,
 	component: RenderPage,
@@ -24,14 +29,14 @@ export const Route = createFileRoute("/_app/projects/$projectId/videos/$videoId/
 function RenderPage() {
 	const { project: parent } = project.useLoaderData();
 	const { video: source } = video.useLoaderData();
-	const { render, uploads } = Route.useLoaderData();
+	const { render, uploads, hosted } = Route.useLoaderData();
 	const navigate = useNavigate();
 	const toast = useToast();
 	const { busy, act } = useAct();
 	const [deleting, setDeleting] = useState(false);
 	const params = { projectId: parent.id, videoId: source.id };
 	const running = isRunning(render.status);
-	usePoll(running || uploads.some((upload) => isRunning(upload.status)), 2500);
+	usePoll(running || uploads.some((upload) => isRunning(upload.status)) || hosted.some((copy) => isRunning(copy.status)), 2500);
 	const name = `${render.aspect} at ${render.resolution}`;
 
 	return (
@@ -185,6 +190,37 @@ function RenderPage() {
 					<div className="lines">
 						{uploads.map((upload) => (
 							<UploadLine key={upload.id} upload={upload} />
+						))}
+					</div>
+				)}
+			</div>
+
+			<div className="block">
+				<div className="block-head">
+					<div>
+						<h2>On the web</h2>
+						<p>
+							{hosted.length
+								? "A page to share and a player to embed on any site. Storage and every minute watched are billed to this account."
+								: "Host this export to get a page to share and a player to embed on any site, with captions and adaptive streaming. Storage and minutes watched are billed to this account."}
+						</p>
+					</div>
+					{render.status === "done" && !hosted.some((copy) => copy.status !== "failed") && (
+						<button
+							type="button"
+							className="btn quiet"
+							disabled={busy}
+							// The person pressing this is approving this cut for anyone with the link.
+							onClick={() => void act(() => op("hosting.publish", { renderId: render.id, personApproved: true, waitSeconds: 0 }), "Hosting: it plays once processing finishes")}
+						>
+							Host this export
+						</button>
+					)}
+				</div>
+				{hosted.length > 0 && (
+					<div className="lines">
+						{hosted.map((copy) => (
+							<HostedLine key={copy.id} hosted={copy} />
 						))}
 					</div>
 				)}
