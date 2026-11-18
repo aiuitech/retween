@@ -3,7 +3,7 @@
  * using), so an agent can try something bold and go back. See the table in
  * db/schema.ts.
  */
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, ne } from "drizzle-orm";
 import type { Storyboard } from "../../../shared/storyboard.ts";
 import { db, schema } from "../db/client.ts";
 import type { ResolvedMedia } from "../db/schema.ts";
@@ -53,13 +53,21 @@ export async function saveCheckpoint(video: Pick<Video, "id" | "storyboard" | "r
 	return checkpoint!;
 }
 
-/** Media named checkpoints still use: kept when preparation replaces it. */
+/**
+ * Media that must outlive a change to one video: what its named checkpoints
+ * use, and what other videos in the project use (a cutdown shares its
+ * source's media). Kept when preparation replaces it or the video is deleted.
+ */
 export async function protectedAssetIds(videoId: string): Promise<Set<string>> {
-	const named = await db.query.videoCheckpoints.findMany({
-		where: and(eq(schema.videoCheckpoints.videoId, videoId), eq(schema.videoCheckpoints.auto, false)),
-		columns: { resolved: true },
-	});
-	return new Set(named.flatMap((checkpoint) => resolvedIds(checkpoint.resolved)));
+	const video = await db.query.videos.findFirst({ where: eq(schema.videos.id, videoId), columns: { projectId: true } });
+	const [named, others] = await Promise.all([
+		db.query.videoCheckpoints.findMany({
+			where: and(eq(schema.videoCheckpoints.videoId, videoId), eq(schema.videoCheckpoints.auto, false)),
+			columns: { resolved: true },
+		}),
+		video ? db.query.videos.findMany({ where: and(eq(schema.videos.projectId, video.projectId), ne(schema.videos.id, videoId)), columns: { resolved: true } }) : Promise.resolve([]),
+	]);
+	return new Set([...named.flatMap((checkpoint) => resolvedIds(checkpoint.resolved)), ...others.flatMap((other) => resolvedIds(other.resolved))]);
 }
 
 export async function getCheckpoint(videoId: string, checkpointId: string): Promise<Checkpoint> {

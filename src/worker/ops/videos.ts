@@ -10,7 +10,7 @@ import { AppError, badRequest, newId, notFound } from "../lib/util.ts";
 import { assetsById } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
 import { latestReview, reviewSummary, unreadReviews } from "../services/reviews.ts";
-import { checkpointsFor, deleteCheckpoints, difference, getCheckpoint, restorableMedia, saveCheckpoint } from "../services/checkpoints.ts";
+import { checkpointsFor, deleteCheckpoints, difference, getCheckpoint, protectedAssetIds, restorableMedia, saveCheckpoint } from "../services/checkpoints.ts";
 import { posterFor } from "../services/thumbnails.ts";
 import { createRender, freshTimeline, getRender, renderView } from "../services/renders.ts";
 import { deletePrefix } from "../services/storage.ts";
@@ -258,7 +258,9 @@ export const videoOps = [
 				...(video.resolved.music ? [video.resolved.music] : []),
 				// Icons are left alone: they are shared by every video in the project.
 			].map((entry) => entry.assetId);
-			const assets = [...(await assetsById(project.id, generated)).values()].filter((asset) => asset.tags.includes("auto"));
+			// Media another video still uses (a cutdown shares its source's) stays.
+			const shared = await protectedAssetIds(video.id);
+			const assets = [...(await assetsById(project.id, generated)).values()].filter((asset) => asset.tags.includes("auto") && !shared.has(asset.id));
 			for (const asset of assets) if (asset.r2Key) keys.push(asset.r2Key);
 			if (keys.length) await env.MEDIA.delete(keys);
 			await deletePrefix(`projects/${project.id}/previews/${video.id}-`);
@@ -458,6 +460,63 @@ export const videoOps = [
 			const { video } = await getVideo(actor, input.videoId);
 			await deleteCheckpoints(video.id, input.checkpointIds);
 			return { deleted: input.checkpointIds.length };
+		},
+	}),
+
+	defineOp({
+		name: "video.derive",
+		title: "Cut a new video from this one",
+		description:
+			"Make a new video from some of this one's scenes, in the order given: a Short from the strongest moments, a teaser, a version for one audience. " +
+			"The scenes and the media already made for them are reused, so preparing it costs nothing for those scenes (the music is re-scored to the new length). " +
+			"Visuals stay framed for this video's shape and are cropped when exported in another (render the new video at 9:16 for a Short); pass `aspect` to have its pictures made for a new shape instead, which regenerates them. " +
+			"Edit the new video like any other: put the best moment first, shorten narration, add an outro.",
+		input: z.object({
+			videoId,
+			title: z.string().min(1).max(200),
+			sceneIds: z.array(z.string()).min(1).max(80).describe("Scenes to take, in the order they should play"),
+			brief: z.string().max(4000).optional(),
+			aspect: aspect.optional().describe("Make the new video's pictures for this shape (regenerates them). Default: keep this video's, and crop when exporting"),
+		}),
+		handler: async (input, { actor }) => {
+			const { video, project } = await getVideo(actor, input.videoId);
+			const byId = new Map(video.storyboard.scenes.map((scene) => [scene.id, scene]));
+			const missing = input.sceneIds.find((id) => !byId.has(id));
+			if (missing) throw notFound(`Scene "${missing}"`);
+			if (new Set(input.sceneIds).size !== input.sceneIds.length) throw badRequest("A scene can only be taken once");
+			const scenes = input.sceneIds.map((id) => structuredClone(byId.get(id)!));
+			// Music settings carry over; the bed itself is made again to fit the new length (an uploaded bed is simply reused).
+			const storyboard = Storyboard.parse({ ...video.storyboard, scenes });
+			const pick = <T,>(group: Record<string, T> | undefined, keep: (key: string) => boolean) => Object.fromEntries(Object.entries(group ?? {}).filter(([key]) => keep(key)));
+			const taken = new Set(input.sceneIds);
+			const sameShape = !input.aspect || input.aspect === video.aspect;
+			const resolved = {
+				...emptyResolved(),
+				narration: pick(video.resolved.narration, (key) => taken.has(key)),
+				visual: sameShape ? pick(video.resolved.visual, (key) => taken.has(key)) : {},
+				cutout: sameShape ? pick(video.resolved.cutout, (key) => taken.has(key)) : {},
+				sfx: pick(video.resolved.sfx, (key) => taken.has(key.split(":")[0]!)),
+				icons: { ...video.resolved.icons },
+				withheld: pick(video.resolved.withheld, (key) => taken.has(key.split(":")[1] ?? "")),
+			};
+			const [created] = await db
+				.insert(schema.videos)
+				.values({
+					id: newId("vid"),
+					projectId: project.id,
+					title: input.title,
+					brief: input.brief ?? `Cut from "${video.title}" (${video.id}).`,
+					aspect: input.aspect ?? video.aspect,
+					storyboard,
+					resolved,
+				})
+				.returning();
+			return {
+				video: await videoSummary(created!),
+				reused: { narration: Object.keys(resolved.narration).length, visuals: Object.keys(resolved.visual).length },
+				review: await reviewStoryboard(created!, project),
+				next: "Adjust it (scene.patch, scene.move), then video.prepare: reused scenes cost nothing. Render at 9:16 for a Short.",
+			};
 		},
 	}),
 
