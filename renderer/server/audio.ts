@@ -8,6 +8,13 @@
  * absolute and relative gating), so the numbers line up with what YouTube and
  * other platforms measure.
  */
+import { createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import { RenderInternals } from "@remotion/renderer";
 import type { Timeline, TimelineAudio } from "../../shared/timeline.ts";
 import { volumeAt } from "../src/lib/audio.ts";
@@ -88,6 +95,38 @@ function decode(src: string, startSec: number, seconds: number): Promise<Stereo>
 			reject(new Error(reason.replace(/(https?:\/\/[^\s?"')]+)\?[^\s"')]*/g, "$1")));
 		});
 	});
+}
+
+/**
+ * Copies every remote source into `dir` and returns src -> local path. The
+ * ffmpeg Remotion ships is built without TLS, so it cannot open https URLs
+ * (signed file links fail with "Protocol not found"); it only ever reads local
+ * files. A source that cannot be fetched maps to the Error that says why.
+ */
+export async function localCopies(sources: string[], dir: string): Promise<Map<string, string | Error>> {
+	const copies = new Map<string, string | Error>();
+	const queue = [...new Set(sources)];
+	let n = 0;
+	await Promise.all(
+		Array.from({ length: 6 }, async () => {
+			for (let src = queue.shift(); src; src = queue.shift()) {
+				if (!/^https?:/i.test(src)) {
+					copies.set(src, src.startsWith("file://") ? decodeURIComponent(new URL(src).pathname) : src);
+					continue;
+				}
+				const file = path.join(dir, `${n++}${path.extname(new URL(src).pathname).slice(0, 8)}`);
+				try {
+					const response = await fetch(src, { signal: AbortSignal.timeout(120_000) });
+					if (!response.ok || !response.body) throw new Error(`could not download ${src.replace(/\?.*$/, "")} (HTTP ${response.status})`);
+					await pipeline(Readable.fromWeb(response.body as WebReadableStream<Uint8Array>), createWriteStream(file));
+					copies.set(src, file);
+				} catch (err) {
+					copies.set(src, err instanceof Error ? new Error(err.message.replace(/\?[^\s"')]*/g, "")) : new Error(String(err)));
+				}
+			}
+		}),
+	);
+	return copies;
 }
 
 // --- loudness ------------------------------------------------------------------
@@ -261,20 +300,31 @@ export async function analyseAudio(timeline: Timeline, options: { fromFrame?: nu
 	}
 	const overlapping = work.filter(({ clip }) => clip.startFrame < toFrame && clip.startFrame + clip.durationInFrames > fromFrame);
 
-	// A few decodes at a time: each is its own ffmpeg process.
-	const queue = [...overlapping];
-	await Promise.all(
-		Array.from({ length: 4 }, async () => {
-			for (let job = queue.shift(); job; job = queue.shift()) {
-				const stem = (stems[job.kind] ??= blank());
-				try {
-					await mixClip(job.clip, fps, stem, fromFrame);
-				} catch (err) {
-					skipped.push({ id: job.id, reason: (err instanceof Error ? err.message : String(err)).slice(0, 200) });
+	const dir = await mkdtemp(path.join(tmpdir(), "retween-audio-"));
+	try {
+		const copies = await localCopies(
+			overlapping.map(({ clip }) => clip.src),
+			dir,
+		);
+		// A few decodes at a time: each is its own ffmpeg process.
+		const queue = [...overlapping];
+		await Promise.all(
+			Array.from({ length: 4 }, async () => {
+				for (let job = queue.shift(); job; job = queue.shift()) {
+					const stem = (stems[job.kind] ??= blank());
+					try {
+						const local = copies.get(job.clip.src);
+						if (local instanceof Error) throw local;
+						await mixClip({ ...job.clip, src: local ?? job.clip.src }, fps, stem, fromFrame);
+					} catch (err) {
+						skipped.push({ id: job.id, reason: (err instanceof Error ? err.message : String(err)).slice(0, 200) });
+					}
 				}
-			}
-		}),
-	);
+			}),
+		);
+	} finally {
+		await rm(dir, { recursive: true, force: true });
+	}
 
 	const mix = blank();
 	for (const stem of Object.values(stems)) {

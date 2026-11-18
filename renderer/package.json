@@ -13,6 +13,7 @@
 		"start": "node dist/server.mjs",
 		"dev": "node --watch server/index.ts",
 		"typecheck": "tsc --noEmit",
+		"test": "node --test server/",
 		"fixtures": "node fixtures/make-media.mjs",
 		"fixtures:serve": "node fixtures/serve.mjs",
 		"studio": "node scripts/copy-public.mjs && remotion studio src/index.ts"
