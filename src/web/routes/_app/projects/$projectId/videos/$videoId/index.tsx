@@ -2,7 +2,8 @@ import { Link, createFileRoute, getRouteApi, useNavigate } from "@tanstack/react
 import { useState } from "react";
 import { clock, op, plural, sizeOf, usd, when } from "../../../../../../api.ts";
 import { DeleteRender, DeleteVideo, ExportDialog, UploadLine, VideoDialog } from "../../../../../../forms.tsx";
-import type { RenderRow, ReviewRow, ThumbnailInfo, VideoDetail, YoutubeUpload } from "../../../../../../types.ts";
+import { HostingBlock, useHostingDialogs } from "../../../../../../hosting.tsx";
+import type { HostedVideo, RenderRow, ReviewRow, ThumbnailInfo, VideoDetail, YoutubeUpload } from "../../../../../../types.ts";
 import { Storyboard } from "../../../../../../storyboard.tsx";
 import { CopyId, Crumbs, Empty, Menu, Status, StatusOf, Tween, isRunning, useAct, usePoll } from "../../../../../../ui.tsx";
 
@@ -11,13 +12,14 @@ const video = getRouteApi("/_app/projects/$projectId/videos/$videoId");
 
 export const Route = createFileRoute("/_app/projects/$projectId/videos/$videoId/")({
 	loader: async ({ params }) => {
-		const [renders, uploads, reviews, thumbnail] = await Promise.all([
+		const [renders, uploads, reviews, thumbnail, hosting] = await Promise.all([
 			op<{ renders: RenderRow[] }>("render.list", { videoId: params.videoId }),
 			op<{ uploads: YoutubeUpload[] }>("youtube.list", { videoId: params.videoId }).catch(() => ({ uploads: [] })),
 			op<{ reviews: ReviewRow[] }>("review.list", { videoId: params.videoId }).catch(() => ({ reviews: [] })),
 			op<ThumbnailInfo>("thumbnail.get", { videoId: params.videoId }).catch(() => ({ thumbnail: null, poster: null })),
+			op<{ hosted: HostedVideo[] }>("hosting.list", { videoId: params.videoId }).catch(() => ({ hosted: [] })),
 		]);
-		return { renders: renders.renders, uploads: uploads.uploads, reviews: reviews.reviews, thumbnail };
+		return { renders: renders.renders, uploads: uploads.uploads, reviews: reviews.reviews, thumbnail, hosted: hosting.hosted };
 	},
 	component: VideoPage,
 });
@@ -25,14 +27,15 @@ export const Route = createFileRoute("/_app/projects/$projectId/videos/$videoId/
 function VideoPage() {
 	const { project: parent } = project.useLoaderData();
 	const { video: current } = video.useLoaderData();
-	const { renders, uploads, reviews, thumbnail } = Route.useLoaderData();
+	const { renders, uploads, reviews, thumbnail, hosted } = Route.useLoaderData();
+	const hosting = useHostingDialogs();
 	const navigate = useNavigate();
 	const { busy, act } = useAct();
 	const [dialog, setDialog] = useState<"edit" | "delete" | "export" | null>(null);
 	const [removing, setRemoving] = useState<RenderRow | null>(null);
 	const params = { projectId: parent.id, videoId: current.id };
 	const preparing = current.status === "preparing";
-	usePoll(preparing || renders.some((render) => isRunning(render.status)) || uploads.some((upload) => isRunning(upload.status)));
+	usePoll(preparing || [...renders, ...uploads, ...hosted].some((item) => isRunning(item.status)));
 
 	const { pipeline } = current;
 	const scenes = current.storyboard.scenes;
@@ -149,6 +152,7 @@ function VideoPage() {
 										{render.bytes ? <span>{sizeOf(render.bytes)}</span> : null}
 										{render.warnings?.length ? <Status tone="warn">{plural(render.warnings.length, "warning")}</Status> : null}
 										{render.error && <span style={{ color: "var(--red)" }}>{render.error}</span>}
+										{hosted.some((copy) => copy.renderId === render.id && copy.status === "ready") && <Status tone="ok">On the web</Status>}
 									</div>
 								</div>
 								{render.status === "rendering" ? (
@@ -166,6 +170,19 @@ function VideoPage() {
 										</a>
 									)}
 									<Menu label={`Actions for the ${render.aspect} ${render.resolution} export`}>
+										{render.status === "done" &&
+											(() => {
+												const live = hosted.find((copy) => copy.renderId === render.id && copy.status !== "failed");
+												return live ? (
+													<button type="button" onClick={() => hosting.setShareId(live.id)}>
+														Share or embed
+													</button>
+												) : (
+													<button type="button" onClick={() => hosting.setHostFor(render.id)}>
+														Host on the web
+													</button>
+												);
+											})()}
 										{isRunning(render.status) && (
 											<button type="button" disabled={busy} onClick={() => void act(() => op("render.cancel", { renderId: render.id }), "Cancelled export")}>
 												Cancel export
@@ -181,6 +198,8 @@ function VideoPage() {
 					</div>
 				)}
 			</div>
+
+			{(renders.some((render) => render.status === "done") || hosted.length > 0) && <HostingBlock renders={renders} hosted={hosted} videoTitle={current.title} dialogs={hosting} />}
 
 			<div className="block">
 				<div className="block-head">

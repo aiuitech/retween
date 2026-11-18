@@ -1,7 +1,8 @@
 import { Link, createFileRoute, getRouteApi, notFound, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { clock, op, sizeOf, whenExactly } from "../../../../../../../api.ts";
-import { DeleteRender, HostedLine, UploadLine, orNotFound } from "../../../../../../../forms.tsx";
+import { DeleteRender, UploadLine, orNotFound } from "../../../../../../../forms.tsx";
+import { HostingBlock, useHostingDialogs } from "../../../../../../../hosting.tsx";
 import type { HostedVideo, RenderRow, YoutubeUpload } from "../../../../../../../types.ts";
 import { CopyId, Crumbs, Missing, StatusOf, Tween, isRunning, useAct, usePoll, useToast } from "../../../../../../../ui.tsx";
 
@@ -34,6 +35,8 @@ function RenderPage() {
 	const toast = useToast();
 	const { busy, act } = useAct();
 	const [deleting, setDeleting] = useState(false);
+	const hosting = useHostingDialogs();
+	const live = hosted.find((copy) => copy.status !== "failed");
 	const params = { projectId: parent.id, videoId: source.id };
 	const running = isRunning(render.status);
 	usePoll(running || uploads.some((upload) => isRunning(upload.status)) || hosted.some((copy) => isRunning(copy.status)), 2500);
@@ -71,6 +74,16 @@ function RenderPage() {
 							Download
 						</a>
 					)}
+					{render.status === "done" &&
+						(live ? (
+							<button type="button" className="btn quiet" onClick={() => hosting.setShareId(live.id)}>
+								Share or embed
+							</button>
+						) : (
+							<button type="button" className="btn quiet" onClick={() => hosting.setHostFor(render.id)}>
+								Host on the web
+							</button>
+						))}
 					{render.url && (
 						<button
 							type="button"
@@ -195,36 +208,7 @@ function RenderPage() {
 				)}
 			</div>
 
-			<div className="block">
-				<div className="block-head">
-					<div>
-						<h2>On the web</h2>
-						<p>
-							{hosted.length
-								? "A page to share and a player to embed on any site. Storage and every minute watched are billed to this account."
-								: "Host this export to get a page to share and a player to embed on any site, with captions and adaptive streaming. Storage and minutes watched are billed to this account."}
-						</p>
-					</div>
-					{render.status === "done" && !hosted.some((copy) => copy.status !== "failed") && (
-						<button
-							type="button"
-							className="btn quiet"
-							disabled={busy}
-							// The person pressing this is approving this cut for anyone with the link.
-							onClick={() => void act(() => op("hosting.publish", { renderId: render.id, personApproved: true, waitSeconds: 0 }), "Hosting: it plays once processing finishes")}
-						>
-							Host this export
-						</button>
-					)}
-				</div>
-				{hosted.length > 0 && (
-					<div className="lines">
-						{hosted.map((copy) => (
-							<HostedLine key={copy.id} hosted={copy} />
-						))}
-					</div>
-				)}
-			</div>
+			<HostingBlock renders={[render]} hosted={hosted} videoTitle={source.title} dialogs={hosting} />
 
 			<DeleteRender open={deleting} onClose={() => setDeleting(false)} render={render} onDeleted={() => navigate({ to: "/projects/$projectId/videos/$videoId", params })} />
 		</main>

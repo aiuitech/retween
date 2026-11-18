@@ -69,7 +69,10 @@ export function hostedView(row: Hosted) {
 		description: row.description || undefined,
 		/** The watch page: share this link. Anyone with it can watch. */
 		pageUrl: hostedPageUrl(row.id),
-		/** For an iframe; embedCode wraps it so it keeps its shape at any width. */
+		/**
+		 * For an iframe; embedCode wraps it so it keeps its shape at any width. Both URLs take
+		 * play options: ?autoplay=1 (muted), loop=1, controls=0 and t=<seconds> to start part way.
+		 */
 		embedUrl: hostedEmbedUrl(row.id),
 		embedCode: ready ? embedSnippet(hostedEmbedUrl(row.id), row.title, row.width, row.height) : undefined,
 		width: row.width,
@@ -79,6 +82,8 @@ export function hostedView(row: Hosted) {
 		chapters: row.chapters.length ? row.chapters : undefined,
 		/** Sites allowed to embed it; empty means any site. */
 		allowedOrigins: row.allowedOrigins,
+		/** The poster shown before playing and in link previews. */
+		posterUrl: row.posterKey ? `${hostedPageUrl(row.id)}/poster` : undefined,
 		error: row.error ?? undefined,
 		warnings: row.warnings.length ? row.warnings : undefined,
 		createdAt: row.createdAt,

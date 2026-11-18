@@ -2,8 +2,8 @@
 import { notFound, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { ApiError, op, when } from "./api.ts";
-import { ASPECTS, type HostedVideo, type ProjectRow, RESOLUTIONS, type RenderRow, type VideoRow, type YoutubeUpload } from "./types.ts";
-import { Confirm, Dialog, Field, StatusOf, useAct, useToast } from "./ui.tsx";
+import { ASPECTS, type ProjectRow, RESOLUTIONS, type RenderRow, type VideoRow, type YoutubeUpload } from "./types.ts";
+import { Confirm, Dialog, Field, StatusOf, useAct } from "./ui.tsx";
 
 /** In a loader: an id that does not exist (or belongs to someone else) is a missing page, not a crash. */
 export const orNotFound = (error: unknown): never => {
@@ -288,74 +288,3 @@ export function UploadLine({ upload }: { upload: YoutubeUpload }) {
 	);
 }
 
-/** One hosted copy of an export: its watch page, embed code, and pausing or removing it. */
-export function HostedLine({ hosted }: { hosted: HostedVideo }) {
-	const { busy, act } = useAct();
-	const toast = useToast();
-	const [removing, setRemoving] = useState(false);
-	const ready = hosted.status === "ready";
-	const copy = (text: string, what: string) => {
-		void navigator.clipboard.writeText(text);
-		toast(`Copied ${what}`);
-	};
-	return (
-		<div className="line">
-			<div className="grow">
-				<div className="title clip">{hosted.title}</div>
-				<div className="facts">
-					{ready && !hosted.enabled && <span>Paused</span>}
-					<span>{hosted.allowedOrigins.length ? `Embeds on ${hosted.allowedOrigins.join(", ")}` : "Embeds anywhere"}</span>
-					{hosted.captions && <span>Captions ({hosted.captions})</span>}
-					<span>{when(hosted.createdAt)}</span>
-					{hosted.error && <span style={{ color: "var(--red)" }}>{hosted.error}</span>}
-					{hosted.warnings?.map((warning) => (
-						<span key={warning} style={{ color: "var(--amber)" }}>
-							{warning}
-						</span>
-					))}
-				</div>
-			</div>
-			<StatusOf status={hosted.status} />
-			<div className="acts">
-				{ready && (
-					<>
-						<a className="btn quiet small" href={hosted.pageUrl} target="_blank" rel="noreferrer">
-							Open page
-						</a>
-						<button type="button" className="btn quiet small" onClick={() => copy(hosted.pageUrl, "the link")}>
-							Copy link
-						</button>
-						{hosted.embedCode && (
-							<button type="button" className="btn quiet small" onClick={() => copy(hosted.embedCode!, "the embed code")}>
-								Copy embed code
-							</button>
-						)}
-						<button
-							type="button"
-							className="btn quiet small"
-							disabled={busy}
-							onClick={() => void act(() => op("hosting.update", { hostedId: hosted.id, enabled: !hosted.enabled }), hosted.enabled ? "Paused: nothing plays until you resume it" : "Resumed")}
-						>
-							{hosted.enabled ? "Pause" : "Resume"}
-						</button>
-					</>
-				)}
-				<button type="button" className="btn quiet small" onClick={() => setRemoving(true)}>
-					Remove
-				</button>
-			</div>
-			<Confirm
-				open={removing}
-				onClose={() => setRemoving(false)}
-				title="Stop hosting this video?"
-				action="Stop hosting"
-				busy={busy}
-				onConfirm={async () => {
-					if (await act(() => op("hosting.delete", { hostedId: hosted.id }), "No longer hosted")) setRemoving(false);
-				}}
-			>
-				The watch page and every embed of it stop working, and it stops being billed. The export itself is kept.
-			</Confirm>
-		</div>
-	);
-}

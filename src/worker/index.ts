@@ -338,9 +338,9 @@ app.post("/api/stripe/webhook", async (c) => {
 // ------------------------------------------------------------ Hosted videos
 
 /** Public: the watch page, the embed and the poster of a hosted video, and oEmbed for link previews in other apps. */
-app.get("/v/:id", (c) => watchPage(c.req.param("id")));
+app.get("/v/:id", (c) => watchPage(c.req.param("id"), new URL(c.req.url)));
 app.get("/v/:id/poster", (c) => posterImage(c.req.param("id"), c.req.raw));
-app.get("/embed/:id", (c) => embedPage(c.req.param("id")));
+app.get("/embed/:id", (c) => embedPage(c.req.param("id"), new URL(c.req.url)));
 app.get("/api/oembed", (c) => oembed(c.req.raw));
 
 app.all("/api/*", (c) => c.json({ ok: false, error: { code: "not_found", message: "No such endpoint" } }, 404));

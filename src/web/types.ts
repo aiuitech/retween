@@ -141,9 +141,14 @@ export interface HostedVideo {
 	status: string;
 	enabled: boolean;
 	title: string;
+	description?: string;
 	pageUrl: string;
 	embedUrl: string;
 	embedCode?: string;
+	posterUrl?: string;
+	width: number;
+	height: number;
+	durationSec?: number;
 	captions?: string;
 	allowedOrigins: string[];
 	error?: string;

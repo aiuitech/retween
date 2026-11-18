@@ -6,7 +6,7 @@
  */
 import { env } from "cloudflare:workers";
 import { resolvePalette } from "../../../shared/brand.ts";
-import { embedSnippet, frameAncestors } from "../../../shared/hosting.ts";
+import { type PlayOptions, embedSnippet, frameAncestors, readPlayOptions, streamPlayerParams } from "../../../shared/hosting.ts";
 import { stamp } from "../../../shared/publish.ts";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client.ts";
@@ -25,19 +25,27 @@ const UNAVAILABLE: Record<Unavailable, string> = {
 	account: "This video is not available right now.",
 };
 
+/** How one view plays: the options in the page's URL, and the brand's accent on the player's controls. */
+interface View {
+	options: PlayOptions;
+	accent?: string;
+}
+
 /** Stream's player for one view, with the poster, captions on by default and nothing preloaded until asked. */
-function playerSrc(row: Hosted, token: string): string {
-	const params = new URLSearchParams({ preload: "metadata", letterboxColor: "transparent" });
+function playerSrc(row: Hosted, token: string, view: View): string {
+	const params = new URLSearchParams({ preload: "metadata", letterboxColor: "transparent", ...streamPlayerParams(view.options) });
 	const poster = posterUrl(row);
-	if (poster) params.set("poster", poster);
+	// A poster would cover an autoplaying video's first frame for no reason.
+	if (poster && !view.options.autoplay) params.set("poster", poster);
 	if (row.captionsLanguage) params.set("defaultTextTrack", row.captionsLanguage);
+	if (view.accent) params.set("primaryColor", view.accent);
 	return `${row.streamHost}/${token}/iframe?${params}`;
 }
 
 const PLAYER_ALLOW = "accelerometer; gyroscope; autoplay; encrypted-media; picture-in-picture; fullscreen";
 
-function playerHtml(row: Hosted, token: string | undefined, unavailable: Unavailable | undefined): string {
-	if (token) return `<iframe id="player" src="${esc(playerSrc(row, token))}" title="${esc(row.title)}" allow="${PLAYER_ALLOW}" allowfullscreen></iframe>`;
+function playerHtml(row: Hosted, token: string | undefined, unavailable: Unavailable | undefined, view: View): string {
+	if (token) return `<iframe id="player" src="${esc(playerSrc(row, token, view))}" title="${esc(row.title)}" allow="${PLAYER_ALLOW}" allowfullscreen></iframe>`;
 	const poster = posterUrl(row);
 	return `<div class="gone"${poster ? ` style="background-image:url('${esc(poster)}')"` : ""}><p>${esc(UNAVAILABLE[unavailable ?? "paused"])}</p></div>`;
 }
@@ -58,7 +66,7 @@ function headers(csp: string): HeadersInit {
 	};
 }
 
-export async function watchPage(hostedId: string): Promise<Response> {
+export async function watchPage(hostedId: string, url: URL): Promise<Response> {
 	const found = await playback(hostedId);
 	if (!found) return new Response(notFoundHtml(false), { status: 404, headers: headers("frame-ancestors 'none'") });
 	const { row, token, unavailable } = found;
@@ -74,6 +82,7 @@ export async function watchPage(hostedId: string): Promise<Response> {
 	const summary = (row.description || brand.identity?.tagline || "").replace(/\s+/g, " ").trim().slice(0, 200);
 	const vertical = row.height > row.width;
 	const chapters = token ? row.chapters : [];
+	const view: View = { options: readPlayOptions(url.searchParams), accent: brand.visual?.palette ? palette.accent : undefined };
 
 	const html = `<!doctype html>
 <html lang="${esc(row.captionsLanguage ?? "en")}">
@@ -129,7 +138,7 @@ footer a{color:inherit}
 <body>
 <main>
 ${brandName ? `<header><span>${websiteUrl ? `<a href="${esc(websiteUrl)}" rel="noopener">${esc(brandName)}</a>` : esc(brandName)}</span></header>` : ""}
-<div class="frame">${playerHtml(row, token, unavailable)}</div>
+<div class="frame">${playerHtml(row, token, unavailable, view)}</div>
 <h1>${esc(row.title)}</h1>
 ${row.description ? `<p class="desc">${esc(row.description)}</p>` : ""}
 ${
@@ -154,10 +163,12 @@ document.querySelectorAll(".chapters button").forEach(function(b){b.addEventList
 	return new Response(html, { status: token || unavailable !== "failed" ? 200 : 410, headers: headers("frame-ancestors 'none'") });
 }
 
-export async function embedPage(hostedId: string): Promise<Response> {
+export async function embedPage(hostedId: string, url: URL): Promise<Response> {
 	const found = await playback(hostedId);
 	if (!found) return new Response(notFoundHtml(true), { status: 404, headers: headers("frame-ancestors *") });
 	const { row, token, unavailable } = found;
+	const palette = token ? (await getProjectById(row.projectId))?.brand.visual?.palette : undefined;
+	const view: View = { options: readPlayOptions(url.searchParams), accent: palette ? resolvePalette(palette).accent : undefined };
 	const html = `<!doctype html>
 <html lang="${esc(row.captionsLanguage ?? "en")}">
 <head>
@@ -172,7 +183,7 @@ iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
 .gone p{margin:0;padding:12px 18px;border-radius:8px;background:rgb(0 0 0 / .72);color:#eee;text-align:center;max-width:80%}
 </style>
 </head>
-<body>${playerHtml(row, token, unavailable)}</body>
+<body>${playerHtml(row, token, unavailable, view)}</body>
 </html>`;
 	return new Response(html, { headers: headers(frameAncestors(row.allowedOrigins)) });
 }

@@ -69,6 +69,7 @@ const STATUS: Record<string, [string, Tone]> = {
 	pending: ["Generating", "busy"],
 	missing: ["Not generated", "idle"],
 	processing: ["Processing", "busy"],
+	paused: ["Paused", "warn"],
 };
 export function StatusOf({ status }: { status: string }) {
 	const [label, tone] = STATUS[status] ?? [status, "idle" as Tone];
@@ -93,10 +94,11 @@ function useCopied(): [boolean, (text: string) => void] {
 	];
 }
 
-export function Snippet({ children }: { children: string }) {
+/** Code or a link with a Copy button. `wrap` breaks long lines (an embed code) instead of scrolling them. */
+export function Snippet({ children, wrap }: { children: string; wrap?: boolean }) {
 	const [copied, copy] = useCopied();
 	return (
-		<div className="snippet">
+		<div className={`snippet${wrap ? " wrap" : ""}`}>
 			<button type="button" onClick={() => copy(children)}>
 				{copied ? "Copied" : "Copy"}
 			</button>
