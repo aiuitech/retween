@@ -21,6 +21,13 @@ deploy_args=("$@")
 if [[ -f "$SECRETS_FILE" ]]; then
 	echo "→ Deploying with secrets from $SECRETS_FILE"
 	deploy_args+=(--secrets-file "$SECRETS_FILE")
+	# cf expands the secrets file against the environment, and a variable already set there
+	# overrides the file's value. A stale GOOGLE_CLIENT_ID inherited from a long-running terminal
+	# or agent once shipped a deleted OAuth client to production, so the file always wins.
+	while IFS='=' read -r key _ || [[ -n "$key" ]]; do
+		key="${key#export }"
+		[[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && unset "$key"
+	done < "$SECRETS_FILE"
 else
 	echo "→ Deploying ($SECRETS_FILE not found; existing secrets are kept)"
 fi
