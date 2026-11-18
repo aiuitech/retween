@@ -28,6 +28,8 @@ export interface Op<Input extends z.ZodType = z.ZodType, Output = unknown> {
 	handler: (input: z.output<Input>, ctx: OpContext) => Promise<Output>;
 	/** Only administrators can see or call it. */
 	admin?: boolean;
+	/** Only superusers (SUPERUSER_EMAILS) can see or call it: moving money. Implies `admin`. */
+	superuser?: boolean;
 	/** Does not change anything. */
 	readOnly?: boolean;
 	/** Deletes something that cannot be recovered. */
@@ -61,6 +63,7 @@ export function manifestEntry(op: Op) {
 		description: op.description,
 		inputSchema: z.toJSONSchema(op.input, { io: "input", unrepresentable: "any" }),
 		admin: op.admin ?? false,
+		superuser: op.superuser ?? false,
 		readOnly: op.readOnly ?? false,
 		destructive: op.destructive ?? false,
 		paid: op.paid ?? false,

@@ -16,6 +16,7 @@ import { contentTypeFor, kindFor, serveObject, verifySignedUrl, verifyUploadUrl 
 import { accrueStorage } from "./services/metering.ts";
 import { reconcileContainers, reconcileFal } from "./services/reconcile.ts";
 import { abortMultipart, completeMultipart, startMultipart, uploadPart } from "./services/uploads.ts";
+import { completeCheckout, handleStripeEvent, invoiceClosedMonth, portalUrl, setupCheckoutUrl, verifyWebhook } from "./services/billing.ts";
 import { budgetStatus } from "./services/usage.ts";
 import { connectState, readConnectState, saveChannel } from "./services/youtube.ts";
 
@@ -78,8 +79,8 @@ if (import.meta.env.DEV) {
 					name: name ?? email.split("@")[0]!,
 					emailVerified: true,
 					role: superuser ? "admin" : "user",
-					approved: superuser,
-					monthlyBudgetCents: 2500,
+					billingStatus: "none",
+					monthlyBudgetCents: Number(env.DEFAULT_MONTHLY_BUDGET_CENTS) || 0,
 					createdAt: new Date(),
 					updatedAt: new Date(),
 				})
@@ -109,7 +110,7 @@ app.on(["GET", "HEAD"], "/api/files/:key", async (c) => {
 	return serveObject(c.req.raw, key, url.searchParams.get("dl"));
 });
 
-/** The signed-in account, including accounts still waiting for approval. */
+/** The signed-in account, including accounts that have not set up billing yet. */
 app.get("/api/v1/me", async (c) => {
 	const actor = await actorFromRequest(c.req.raw);
 	if (!actor) return c.json({ ok: true, user: null });
@@ -121,7 +122,7 @@ app.get("/api/v1/me", async (c) => {
 			name: actor.name,
 			image: actor.image,
 			isAdmin: actor.isAdmin,
-			approved: actor.approved,
+			billing: actor.billing,
 			banned: actor.banned,
 			budget: await budgetStatus(actor),
 		},
@@ -249,7 +250,7 @@ app.delete("/api/uploads/multipart/:token", async (c) => c.json({ ok: true, resu
 app.get("/api/youtube/connect", async (c) => {
 	const actor = await actorFromRequest(c.req.raw);
 	if (!actor || actor.via !== "session") return c.redirect("/connect?youtube=sign-in");
-	if (!actor.approved || actor.banned) return c.redirect("/");
+	if (actor.billing === "required" || actor.banned) return c.redirect("/");
 	return c.redirect(authorizationUrl(await connectState(actor.id)));
 });
 
@@ -278,6 +279,56 @@ app.get("/api/youtube/callback", async (c) => {
 	}
 });
 
+// ------------------------------------------------------------ Billing
+
+/**
+ * Billing pages are plain links (like YouTube's connect link): each needs the
+ * browser's own session and ends on a Stripe page or back in the web app.
+ */
+const browserActor = async (request: Request) => {
+	const actor = await actorFromRequest(request);
+	return actor && actor.via === "session" && !actor.banned ? actor : null;
+};
+
+/** Saves a payment method with Stripe Checkout. Nothing is charged. */
+app.get("/api/billing/setup", async (c) => {
+	const actor = await browserActor(c.req.raw);
+	if (!actor) return c.redirect("/sign-in?redirect=%2Fbilling");
+	if (actor.billing === "exempt") return c.redirect("/projects");
+	return c.redirect(await setupCheckoutUrl(actor), 303);
+});
+
+/** Where Checkout sends the person back. The webhook does the same work; this just saves waiting for it. */
+app.get("/api/billing/return", async (c) => {
+	const actor = await browserActor(c.req.raw);
+	if (!actor) return c.redirect("/sign-in?redirect=%2Fbilling");
+	const sessionId = c.req.query("session_id");
+	const done = sessionId ? await completeCheckout(sessionId, actor).catch((error) => (console.error("checkout return", error), false)) : false;
+	return c.redirect(done ? "/projects" : "/billing?state=processing");
+});
+
+/** Stripe's customer portal: payment method, invoices, receipts. */
+app.get("/api/billing/portal", async (c) => {
+	const actor = await browserActor(c.req.raw);
+	if (!actor) return c.redirect("/sign-in?redirect=%2Faccount%2Fspending");
+	if (actor.billing === "exempt") return c.redirect("/account/spending");
+	if (actor.billing === "required") return c.redirect("/billing");
+	return c.redirect(await portalUrl(actor), 303);
+});
+
+app.post("/api/stripe/webhook", async (c) => {
+	const event = await verifyWebhook(await c.req.text(), c.req.header("stripe-signature") ?? null);
+	if (!event) return c.json({ ok: false, error: { code: "bad_signature", message: "Signature did not verify" } }, 400);
+	try {
+		await handleStripeEvent(event);
+	} catch (error) {
+		// A non-2xx answer makes Stripe deliver the event again later.
+		console.error("stripe webhook failed", event.type, event.id, error);
+		return c.json({ ok: false }, 500);
+	}
+	return c.json({ ok: true });
+});
+
 app.all("/api/*", (c) => c.json({ ok: false, error: { code: "not_found", message: "No such endpoint" } }, 404));
 
 // Everything else is the web app: pages and its server functions (src/web).
@@ -286,8 +337,8 @@ app.all("*", (c) => start.fetch(c.req.raw));
 export default {
 	fetch: app.fetch,
 	/**
-	 * Nightly: charge the day that just ended for storage, then replace metered
-	 * costs with billed ones where the vendors have them. Each job runs on its own,
+	 * Nightly: charge the day that just ended for storage, replace metered costs
+	 * with billed ones where the vendors have them, then (from the 2nd) invoice last month. Each job runs on its own,
 	 * so one failing does not stop the others.
 	 */
 	async scheduled(controller, _env, ctx) {
@@ -296,6 +347,8 @@ export default {
 			["storage", () => accrueStorage(day)],
 			["fal reconciliation", reconcileFal],
 			["container reconciliation", reconcileContainers],
+			// After reconciliation, so the closed month is billed at what the vendors charged.
+			["invoicing", () => invoiceClosedMonth(new Date(controller.scheduledTime))],
 		];
 		ctx.waitUntil(
 			(async () => {

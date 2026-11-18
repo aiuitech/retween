@@ -17,12 +17,20 @@ export interface Me {
 	name: string;
 	image: string | null;
 	isAdmin: boolean;
-	approved: boolean;
+	isSuperuser: boolean;
+	billing: "exempt" | "active" | "required" | "past_due";
 	banned: boolean;
-	budget: { monthlyBudgetUsd: number; ownLimitUsd?: number; spentThisMonthUsd: number; remainingUsd: number };
+	budget: {
+		monthlyBudgetUsd: number;
+		ownLimitUsd?: number;
+		spentThisMonthUsd: number;
+		creditUsd: number;
+		estimatedBillUsd: number;
+		remainingUsd: number;
+	};
 }
 
-/** The signed-in account, including accounts still waiting for approval. */
+/** The signed-in account, including accounts that have not set up billing yet. */
 export const getMe = createServerFn({ method: "GET" }).handler(async (): Promise<Me | null> => {
 	const actor = await actorFromRequest(getRequest());
 	if (!actor) return null;
@@ -32,7 +40,8 @@ export const getMe = createServerFn({ method: "GET" }).handler(async (): Promise
 		name: actor.name,
 		image: actor.image,
 		isAdmin: actor.isAdmin,
-		approved: actor.approved,
+		isSuperuser: actor.isSuperuser,
+		billing: actor.billing,
 		banned: actor.banned,
 		budget: await budgetStatus(actor),
 	};

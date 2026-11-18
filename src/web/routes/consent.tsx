@@ -8,7 +8,7 @@ export const Route = createFileRoute("/consent")({
 	validateSearch: (search: Record<string, unknown>) => search,
 	beforeLoad: ({ context, location }) => {
 		if (!context.me) throw redirect({ to: "/sign-in", search: { redirect: location.href } });
-		if (context.me.banned || !context.me.approved) throw redirect({ to: "/pending" });
+		if (context.me.banned || context.me.billing === "required") throw redirect({ to: "/billing" });
 	},
 	component: Consent,
 });

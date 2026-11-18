@@ -27,14 +27,17 @@ export default defineConfig(({ mode }) => {
 			previewUrls: false,
 			observability: { enabled: true },
 			limits: { cpuMs: 300_000 },
-			// Nightly: charge each account a day of storage (services/metering.ts).
+			// Nightly: charge each account a day of storage (services/metering.ts), reconcile costs,
+			// and from the 2nd of the month invoice the month that closed (services/billing.ts).
 			triggers: [triggers.scheduled({ schedule: "10 0 * * *" })],
 			env: {
 				APP_URL: bindings.text(dev ? "http://localhost:5173" : "https://retween.app"),
-				/** Comma-separated. These accounts become admins the first time they sign in. */
+				/** Comma-separated. These accounts become admins the first time they sign in, and alone can grant credit and run invoicing. */
 				SUPERUSER_EMAILS: bindings.text("greg@aiui.tech"),
-				/** Monthly generation budget given to new users, in US cents. */
-				DEFAULT_MONTHLY_BUDGET_CENTS: bindings.text("2500"),
+				/** Monthly spend cap given to every new account, in billed US cents (markup included). Administrators can change it per account. */
+				DEFAULT_MONTHLY_BUDGET_CENTS: bindings.text("1000"),
+				/** People are billed vendor cost × this at the end of each month. */
+				BILLING_MARKUP: bindings.text("1.4"),
 				/** Used to read container usage from Cloudflare's analytics when reconciling costs. */
 				CLOUDFLARE_ACCOUNT_ID: bindings.text(ACCOUNT_ID),
 				/** Sent with requests to stock-media APIs. */
@@ -56,6 +59,10 @@ export default defineConfig(({ mode }) => {
 				GOOGLE_CLIENT_SECRET: bindings.secret(),
 				OPENROUTER_API_KEY: bindings.secret(),
 				ELEVENLABS_API_KEY: bindings.secret(),
+				/** A restricted key (rk_…) with write access to Customers, Checkout Sessions, Setup Intents, Invoices, Invoice Items and the Customer Portal, and read access to Charges. */
+				STRIPE_SECRET_KEY: bindings.secret(),
+				/** The signing secret of the webhook endpoint at /api/stripe/webhook. */
+				STRIPE_WEBHOOK_SECRET: bindings.secret(),
 			},
 			exports: {
 				Renderer: exports.durableObject({ storage: "sqlite", ...(dev ? {} : { container: renderer }) }),

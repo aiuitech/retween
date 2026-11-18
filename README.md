@@ -117,11 +117,21 @@ Quota: uploads have their own allowance of 100 a day per Cloud project. Captions
 
 ## Access
 
-Anyone can sign in with Google, but a new account can do nothing until an administrator approves it. Emails in `SUPERUSER_EMAILS` (`cloudflare.config.ts`) become administrators on first sign-in. Each account has a monthly generation budget (default $25, `DEFAULT_MONTHLY_BUDGET_CENTS`) that administrators can change per person.
+Anyone can sign in with Google. A new account can do nothing until it adds a payment method (`/billing`, a Stripe Checkout page in setup mode: nothing is charged then); the API answers `402 billing_required` with that link. Emails in `SUPERUSER_EMAILS` (`cloudflare.config.ts`) become administrators on first sign-in; administrators are never billed. Every account has a monthly spend cap in billed dollars (default $10, `DEFAULT_MONTHLY_BUDGET_CENTS`) that administrators can change per person, and an account can set its own lower limit in its cost controls.
+
+## Billing
+
+People pay for what they use, monthly. Every vendor charge is in the usage ledger as it happens (below); the account is billed cost × `BILLING_MARKUP` (1.3).
+
+- **Spend at any moment.** `billing.spend` (MCP `billing_spend`, `retween billing spend`, Account → Spending) gives this month's charges as they will be billed, by kind and project, unspent credit, the estimated invoice, what is left of the cap, and recent invoices. Administrators can pass a `userId`; they also see the raw cost.
+- **Invoices.** From the 2nd of each month the nightly job (after reconciliation) turns last month's ledger into one Stripe invoice per account (`services/billing.ts`): a line per kind of usage with markup, less unspent credit, charged automatically to the saved payment method. Stripe handles retries and dunning. Re-running is safe: accounts already invoiced are left alone. `admin.invoice_run` (dry run by default) does it by hand; `admin.invoices` lists them.
+- **Credit.** Superusers give or take back credit with `admin.credit_grant` (Admin → a person → Give credit). Credit is spent by the next invoices before the card is charged, and adds to the account's headroom under its cap.
+- **Unpaid invoices.** A failed payment (or an opened dispute) makes the account `past_due`: paid work is refused with `402 payment_past_due` until it is settled. Adding a new payment method (Stripe's customer portal, `/api/billing/portal`) retries open invoices at once.
+- **Webhook.** `POST /api/stripe/webhook`, signed with `STRIPE_WEBHOOK_SECRET`. Subscribe it to `checkout.session.completed`, `setup_intent.succeeded`, `invoice.finalized`, `invoice.paid`, `invoice.payment_failed`, `invoice.voided`, `invoice.marked_uncollectible`, `charge.dispute.created` and `customer.deleted`, on API version `2026-10-28.endive` (the SDK's). Locally: `stripe listen --forward-to localhost:5173/api/stripe/webhook`.
 
 ## Costs per account
 
-Every vendor charge is written to the usage ledger (`usage_events`) against the account that caused it, as soon as the vendor answers. `admin.costs` turns the ledger into a statement per account for any period, by provider, kind and model, and applies a markup (`markup: 1.3` → cost × 1.3). The monthly budget is checked against the same ledger.
+Every vendor charge is written to the usage ledger (`usage_events`) against the account that caused it, as soon as the vendor answers. `admin.costs` turns the ledger into a statement per account for any period, by provider, kind and model, and applies the markup (`BILLING_MARKUP` unless one is passed). The monthly spend cap and invoices are computed from the same ledger.
 
 | Vendor | What is charged | How the cost is known (`basis`) |
 | --- | --- | --- |

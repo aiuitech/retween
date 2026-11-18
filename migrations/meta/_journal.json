@@ -36,6 +36,20 @@
       "when": 1794956029629,
       "tag": "0004_account_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794970391133,
+      "tag": "0005_billing",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794970391448,
+      "tag": "0006_drop_approval",
+      "breakpoints": true
     }
   ]
 }

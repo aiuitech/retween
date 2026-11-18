@@ -18,7 +18,9 @@ export const projectOps = [
 	defineOp({
 		name: "whoami",
 		title: "Who am I",
-		description: "The signed-in account, its role, how much of this month's generation budget is left, and what its cost controls switch off or limit.",
+		description:
+			"The signed-in account, its role and billing status, this month's charges, credit and what is left of its spend cap, and what its cost controls switch off or limit. " +
+			"billing.spend has the full breakdown.",
 		input: z.object({}),
 		readOnly: true,
 		handler: async (_input, { actor }) => ({
@@ -26,6 +28,7 @@ export const projectOps = [
 			email: actor.email,
 			name: actor.name,
 			role: actor.isAdmin ? "admin" : "user",
+			billing: actor.billing,
 			budget: await budgetStatus(actor),
 			costControls: describeControls(await getControls(actor.id)),
 		}),

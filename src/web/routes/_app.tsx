@@ -61,6 +61,14 @@ function App() {
 					</Menu>
 				</div>
 			</header>
+			{me.billing === "past_due" && (
+				<div className="page" style={{ paddingBottom: 0 }}>
+					<p className="note bad">
+						An invoice could not be collected, so generating and rendering are paused. <a href="/api/billing/portal">Update your payment method</a> and it is
+						retried at once.
+					</p>
+				</div>
+			)}
 			<Outlet />
 		</>
 	);

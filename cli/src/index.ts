@@ -365,7 +365,7 @@ async function login(flags: Map<string, string | true>) {
 			config.token = body.access_token;
 			const me = await request("/api/v1/me").then((response) => response.json() as Promise<Result>);
 			info(`Signed in as ${bold(me.user?.email ?? "your account")}.`);
-			if (me.user && !me.user.approved) info("This account is waiting for an administrator's approval before it can make videos.");
+			if (me.user?.billing === "required") info(`Add a payment method at ${baseUrl()}/billing before making videos. Nothing is charged until the end of the month.`);
 			return;
 		}
 		const code = body?.error;

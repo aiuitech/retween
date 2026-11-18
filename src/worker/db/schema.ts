@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import type { BrandKit } from "../../../shared/brand.ts";
 import type { CostControls } from "../../../shared/controls.ts";
 import type { Storyboard } from "../../../shared/storyboard.ts";
@@ -367,4 +367,69 @@ export const youtubeUploads = sqliteTable(
 		finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
 	},
 	(t) => [index("youtube_uploads_video_idx").on(t.videoId), index("youtube_uploads_user_idx").on(t.userId)],
+);
+
+/**
+ * Where an account stands with Stripe (`user.billing_status`):
+ * none (no payment method yet: the account cannot be used), active (a payment method is on file),
+ * past_due (a monthly invoice could not be collected: paid work is refused until it is settled).
+ */
+export type BillingStatus = "none" | "active" | "past_due";
+
+/**
+ * Credit a superuser gave an account, in millionths of a US dollar. A negative
+ * row takes credit back. Credit is spent by monthly invoices (`invoices.credit_micros`)
+ * before anything is charged to the payment method.
+ */
+export const billingCredits = sqliteTable(
+	"billing_credits",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		amountMicros: integer("amount_micros").notNull(),
+		note: text("note"),
+		/** The superuser who granted it. */
+		grantedBy: text("granted_by").notNull(),
+		createdAt: createdAt(),
+	},
+	(t) => [index("billing_credits_user_idx").on(t.userId)],
+);
+
+/**
+ * draft: being created in Stripe (a run that stopped part way resumes it).
+ * open: finalized in Stripe and being collected. paid, failed, void, uncollectible: as Stripe reports.
+ * credited: covered entirely by credit, nothing charged. no_charge: nothing to bill.
+ * skipped: the account had charges but no payment method.
+ */
+export type InvoiceStatus = "draft" | "open" | "paid" | "failed" | "void" | "uncollectible" | "credited" | "no_charge" | "skipped";
+
+/** One account's bill for one calendar month (UTC), produced from the usage ledger. */
+export const invoices = sqliteTable(
+	"invoices",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** The month billed, YYYY-MM (UTC). */
+		period: text("period").notNull(),
+		/** What the vendors charged us, before markup. */
+		costMicros: integer("cost_micros").notNull(),
+		markup: real("markup").notNull(),
+		/** The usage charge (cost × markup), in cents, as the invoice lines add up. */
+		chargeCents: integer("charge_cents").notNull(),
+		/** Credit spent on this invoice, in cents. */
+		creditCents: integer("credit_cents").notNull().default(0),
+		/** What the payment method is charged: charge − credit. */
+		amountDueCents: integer("amount_due_cents").notNull(),
+		status: text("status").$type<InvoiceStatus>().notNull(),
+		stripeInvoiceId: text("stripe_invoice_id"),
+		hostedUrl: text("hosted_url"),
+		error: text("error"),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [uniqueIndex("invoices_user_period_idx").on(t.userId, t.period), index("invoices_stripe_idx").on(t.stripeInvoiceId)],
 );

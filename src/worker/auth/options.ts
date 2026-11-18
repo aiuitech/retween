@@ -14,7 +14,7 @@ export interface AuthSettings {
 	secret: string;
 	googleClientId: string;
 	googleClientSecret: string;
-	/** Lower-cased emails that are made admins (and approved) on first sign-in. */
+	/** Lower-cased emails that are made admins on first sign-in. */
 	superuserEmails: string[];
 	/** Spending cap given to newly created users, in cents per calendar month. */
 	defaultMonthlyBudgetCents: number;
@@ -65,14 +65,16 @@ export function authOptions(settings: AuthSettings) {
 			// the session has to be recent instead (better-auth's default "fresh" window).
 			deleteUser: { enabled: true, beforeDelete: (user) => settings.beforeDeleteUser(user) },
 			additionalFields: {
-				/** Only approved users can use the service. Set by an admin. */
-				approved: { type: "boolean", required: false, defaultValue: false, input: false },
 				monthlyBudgetCents: {
 					type: "number",
 					required: false,
 					defaultValue: settings.defaultMonthlyBudgetCents,
 					input: false,
 				},
+				/** The account's Stripe customer, created when it first sets up billing. */
+				stripeCustomerId: { type: "string", required: false, input: false },
+				/** See `BillingStatus`. Only accounts with a payment method on file (or administrators) can use the service. */
+				billingStatus: { type: "string", required: false, defaultValue: "none", input: false },
 			},
 		},
 		databaseHooks: {
@@ -84,7 +86,7 @@ export function authOptions(settings: AuthSettings) {
 							data: {
 								...user,
 								role: isSuperuser ? "admin" : "user",
-								approved: isSuperuser,
+								billingStatus: "none",
 								monthlyBudgetCents: settings.defaultMonthlyBudgetCents,
 							},
 						};

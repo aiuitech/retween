@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { type ReactNode, useEffect, useState } from "react";
-import { op, usd } from "../../../api.ts";
+import { op, usd, when } from "../../../api.ts";
 import { forgetMe } from "../../../session.ts";
 import { useAct } from "../../../ui.tsx";
 
@@ -24,17 +24,49 @@ interface ControlsResult {
 	options: { voiceModels: { id: string; label: string }[]; imageQualities: string[]; clipResolutions: string[]; renderResolutions: string[] };
 }
 
+interface Spend {
+	month: string;
+	asOf: string;
+	chargesUsd: number;
+	byKind: { kind: string; label: string; quantity?: number; unit?: string; chargeUsd: number }[];
+	byProject: { projectId?: string; name: string; chargeUsd: number }[];
+	creditUsd: number;
+	estimatedBillUsd: number;
+	invoice?: { status: string; issuedOn?: string };
+	billing: { status: string; manageUrl?: string };
+	recentInvoices: { period: string; status: string; chargeUsd: number; creditUsd: number; amountDueUsd: number; url?: string }[];
+}
+
+const INVOICE_STATUS: Record<string, string> = {
+	open: "Being collected",
+	paid: "Paid",
+	failed: "Payment failed",
+	void: "Void",
+	uncollectible: "Unpaid",
+	credited: "Covered by credit",
+	no_charge: "Nothing to pay",
+	skipped: "Not billed",
+	draft: "Being prepared",
+};
+
+const monthName = (period: string) => new Date(`${period}-01T00:00:00Z`).toLocaleString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+
 export const Route = createFileRoute("/_app/account/spending")({
-	loader: () => op<ControlsResult>("account.controls"),
+	loader: async () => {
+		const [controls, spend] = await Promise.all([op<ControlsResult>("account.controls"), op<Spend>("billing.spend")]);
+		return { ...controls, spend };
+	},
 	component: Spending,
 });
 
 function Spending() {
 	const { me } = Route.useRouteContext();
-	const { controls, options } = Route.useLoaderData();
+	const { controls, options, spend } = Route.useLoaderData();
 	const { busy, act } = useAct();
 	const { budget } = me;
-	const spent = budget.monthlyBudgetUsd ? Math.min(1, budget.spentThisMonthUsd / budget.monthlyBudgetUsd) : 0;
+	const cap = budget.ownLimitUsd ?? budget.monthlyBudgetUsd;
+	const spent = cap ? Math.min(1, budget.estimatedBillUsd / cap) : 0;
+	const exempt = me.billing === "exempt";
 	const [limit, setLimit] = useState("");
 	const savedLimit = controls.monthlyLimitUsd === null ? "" : String(controls.monthlyLimitUsd);
 	useEffect(() => setLimit(savedLimit), [savedLimit]);
@@ -72,31 +104,103 @@ function Spending() {
 				<div className="block-head">
 					<div>
 						<h2>This month</h2>
-						<p>Generating and rendering draw on a monthly allowance set by an administrator. It resets on the first of the month.</p>
+						<p>
+							{exempt
+								? "Administrator accounts are not billed. Charges still count against the spend cap."
+								: `Charges as they will be billed, up to the last request. ${monthName(spend.month)} is invoiced on ${spend.invoice?.issuedOn ? when(spend.invoice.issuedOn) : "the 2nd"} and charged to your payment method.`}
+						</p>
 					</div>
+					{spend.billing.manageUrl && (
+						<a className="btn quiet small" href={spend.billing.manageUrl}>
+							Payment method and invoices
+						</a>
+					)}
 				</div>
+				{me.billing === "past_due" && (
+					<p className="note bad" style={{ marginBottom: 14 }}>
+						An invoice could not be collected, so paid work is paused. Update your payment method and it is retried at once.
+					</p>
+				)}
 				<dl className="figures">
 					<div>
-						<dt>Spent</dt>
-						<dd>{usd(budget.spentThisMonthUsd)}</dd>
+						<dt>Charges so far</dt>
+						<dd>{usd(spend.chargesUsd)}</dd>
 					</div>
 					<div>
-						<dt>Left</dt>
-						<dd>{usd(budget.remainingUsd)}</dd>
+						<dt>Credit</dt>
+						<dd>{usd(spend.creditUsd)}</dd>
 					</div>
 					<div>
-						<dt>Allowance</dt>
-						<dd>{usd(budget.monthlyBudgetUsd)}</dd>
+						<dt>Estimated bill</dt>
+						<dd>{usd(spend.estimatedBillUsd)}</dd>
+					</div>
+					<div>
+						<dt>Spend cap</dt>
+						<dd>{usd(cap)}</dd>
 					</div>
 				</dl>
-				<div className="meter" style={{ marginTop: 14 }} role="img" aria-label={`${Math.round(spent * 100)}% of this month's allowance used`}>
+				<div className="meter" style={{ marginTop: 14 }} role="img" aria-label={`${Math.round(spent * 100)}% of this month's spend cap used`}>
 					<i className={spent > 0.85 ? "hot" : ""} style={{ width: `${spent * 100}%` }} />
 				</div>
 				<p className="soft" style={{ marginTop: 10 }}>
-					{budget.ownLimitUsd !== undefined && `Your own limit of ${usd(budget.ownLimitUsd)} applies. `}
-					Charges are what each vendor bills for your requests, including render time and storage.
+					{usd(budget.remainingUsd)} left before the cap stops paid work this month.{" "}
+					{budget.ownLimitUsd !== undefined ? `Your own limit of ${usd(budget.ownLimitUsd)} applies. ` : "An administrator can raise the cap. "}
+					Credit is used before your payment method is charged.
 				</p>
+				{spend.byKind.length > 0 && (
+					<div className="lines" style={{ marginTop: 14 }}>
+						{spend.byKind.map((line) => (
+							<div className="line" key={line.kind}>
+								<div className="grow">
+									<div className="title">{line.label}</div>
+									{line.unit && <div className="soft">{`${line.quantity?.toLocaleString("en-US")} ${line.unit}`}</div>}
+								</div>
+								<span className="num">{usd(line.chargeUsd)}</span>
+							</div>
+						))}
+					</div>
+				)}
+				{spend.byProject.length > 1 && (
+					<div className="facts" style={{ marginTop: 12 }}>
+						{spend.byProject.map((row) => (
+							<span key={row.projectId ?? "account"}>
+								{row.name} {usd(row.chargeUsd)}
+							</span>
+						))}
+					</div>
+				)}
 			</section>
+
+			{spend.recentInvoices.length > 0 && (
+				<section className="block">
+					<div className="block-head">
+						<div>
+							<h2>Invoices</h2>
+							<p>One a month, for the month before.</p>
+						</div>
+					</div>
+					<div className="lines">
+						{spend.recentInvoices.map((invoice) => (
+							<div className="line" key={invoice.period}>
+								<div className="grow">
+									<div className="title">{monthName(invoice.period)}</div>
+									<div className="facts">
+										<span>{INVOICE_STATUS[invoice.status] ?? invoice.status}</span>
+										<span>Charges {usd(invoice.chargeUsd)}</span>
+										{invoice.creditUsd > 0 && <span>Credit {usd(invoice.creditUsd)}</span>}
+									</div>
+								</div>
+								<span className="num">{usd(invoice.amountDueUsd)}</span>
+								{invoice.url && (
+									<a className="btn quiet small" href={invoice.url} target="_blank" rel="noreferrer">
+										View
+									</a>
+								)}
+							</div>
+						))}
+					</div>
+				</section>
+			)}
 
 			<section className="block">
 				<div className="block-head">
@@ -150,7 +254,7 @@ function Spending() {
 						<span className="indent" />
 						<label className="grow" htmlFor="own-limit">
 							<div className="title">Your own monthly limit</div>
-							<div className="soft">Stops paid work at this amount in US dollars, even if your allowance is higher. Leave empty for none.</div>
+							<div className="soft">Stops paid work at this amount in US dollars, below the spend cap. Leave empty to use the cap.</div>
 						</label>
 						<input id="own-limit" className="compact" inputMode="decimal" placeholder="No limit" value={limit} onChange={(event) => setLimit(event.target.value)} />
 						<button className="btn quiet small" type="submit" disabled={busy || limit.trim() === savedLimit}>

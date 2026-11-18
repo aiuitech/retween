@@ -10,10 +10,11 @@ interface UserRow {
 	image: string | null;
 	role: "admin" | "user";
 	superuser: boolean;
-	approved: boolean;
+	billing: "exempt" | "active" | "none" | "past_due";
 	banned: boolean;
 	monthlyBudgetUsd: number;
 	spentThisMonthUsd: number;
+	creditUsd: number;
 	projects: number;
 	createdAt: string;
 }
@@ -24,6 +25,8 @@ interface Stats {
 	finishedRenders: number;
 	storedBytes: number;
 	spendThisMonthUsd: number;
+	chargesThisMonthUsd: number;
+	markup: number;
 	spendByKind: { kind: string; usd: number; events: number }[];
 }
 interface UsageEvent {
@@ -41,8 +44,9 @@ interface UsageEvent {
 
 const FILTERS = [
 	["all", "Everyone"],
-	["pending", "Waiting"],
-	["approved", "Approved"],
+	["no_billing", "No billing"],
+	["active", "Paying"],
+	["past_due", "Past due"],
 	["banned", "Suspended"],
 ] as const;
 type Filter = (typeof FILTERS)[number][0];
@@ -60,7 +64,7 @@ export const Route = createFileRoute("/_app/admin")({
 	loader: async ({ deps }) => {
 		const [stats, users, usage] = await Promise.all([
 			op<Stats>("admin.stats"),
-			op<{ users: UserRow[]; total: number; pendingApproval: number }>("admin.users", { status: deps.show, search: deps.q }),
+			op<{ users: UserRow[]; total: number; noBilling: number; pastDue: number }>("admin.users", { status: deps.show, search: deps.q }),
 			op<{ events: UsageEvent[] }>("admin.usage", { limit: 40 }),
 		]);
 		return { stats, users, events: usage.events };
@@ -78,6 +82,7 @@ function Admin() {
 	const [query, setQuery] = useState(search.q ?? "");
 	const [deleting, setDeleting] = useState<UserRow | null>(null);
 	const [budgeting, setBudgeting] = useState<UserRow | null>(null);
+	const [crediting, setCrediting] = useState<UserRow | null>(null);
 
 	useEffect(() => {
 		if (query === (search.q ?? "")) return;
@@ -92,7 +97,7 @@ function Admin() {
 			<div className="head">
 				<div className="words">
 					<h1>Admin</h1>
-					<p>Totals across every account. Spend covers this calendar month.</p>
+					<p>Totals across every account for this calendar month. Cost is what vendors charged; charges are what accounts are billed (× {stats.markup}).</p>
 				</div>
 			</div>
 
@@ -102,7 +107,8 @@ function Admin() {
 					["Projects", stats.projects],
 					["Videos", stats.videos],
 					["Exports", stats.finishedRenders],
-					["Spend", usd(stats.spendThisMonthUsd)],
+					["Cost", usd(stats.spendThisMonthUsd)],
+					["Charges", usd(stats.chargesThisMonthUsd)],
 					["Stored", sizeOf(stats.storedBytes)],
 				].map(([label, value]) => (
 					<div key={label}>
@@ -125,7 +131,10 @@ function Admin() {
 				<div className="block-head">
 					<div>
 						<h2>People</h2>
-						<p>New sign-ins wait here until approved. Each person has a monthly allowance; suspending someone signs them out everywhere.</p>
+						<p>
+							People get in by adding a payment method, and are invoiced on the 2nd for the month before. Each account has a monthly spend cap (in billed
+							dollars); credit is used before their card is charged. Suspending someone signs them out everywhere.
+						</p>
 					</div>
 				</div>
 				<div className="toolbar" style={{ marginTop: 0 }}>
@@ -133,7 +142,8 @@ function Admin() {
 						{FILTERS.map(([key, label]) => (
 							<Link key={key} from={Route.fullPath} search={(prev) => ({ ...prev, show: key === "all" ? undefined : key })} aria-current={(search.show ?? "all") === key ? "true" : undefined}>
 								{label}
-								{key === "pending" && users.pendingApproval ? ` (${users.pendingApproval})` : ""}
+								{key === "no_billing" && users.noBilling ? ` (${users.noBilling})` : ""}
+								{key === "past_due" && users.pastDue ? ` (${users.pastDue})` : ""}
 							</Link>
 						))}
 					</div>
@@ -157,32 +167,30 @@ function Admin() {
 											<span>Joined {when(user.createdAt)}</span>
 											<span>{plural(user.projects, "project")}</span>
 											<span>
-												{usd(user.spentThisMonthUsd)} of {usd(user.monthlyBudgetUsd)} this month
+												{usd(user.spentThisMonthUsd)} of {usd(user.monthlyBudgetUsd)} cap this month
 											</span>
+											{user.creditUsd > 0 && <span>{usd(user.creditUsd)} credit</span>}
 										</div>
 									</div>
 									{user.banned ? (
 										<Status tone="bad">Suspended</Status>
 									) : user.role === "admin" ? (
 										<Status tone="ok">{user.superuser ? "Superuser" : "Administrator"}</Status>
-									) : user.approved ? (
-										<Status tone="ok">Approved</Status>
+									) : user.billing === "past_due" ? (
+										<Status tone="bad">Past due</Status>
+									) : user.billing === "active" ? (
+										<Status tone="ok">Paying</Status>
 									) : (
-										<Status tone="warn">Waiting</Status>
+										<Status tone="warn">No billing</Status>
 									)}
 									<div className="acts">
-										{!user.approved && !user.banned && (
-											<button type="button" className="btn small" disabled={busy} onClick={() => void change(user, { approved: true }, "Approved")}>
-												Approve
-											</button>
-										)}
 										<Menu label={`Actions for ${user.email}`}>
 											<button type="button" onClick={() => setBudgeting(user)}>
-												Change allowance
+												Change spend cap
 											</button>
-											{!locked && user.approved && user.role !== "admin" && !user.banned && (
-												<button type="button" onClick={() => void change(user, { approved: false }, "Revoked approval")}>
-													Revoke approval
+											{me.isSuperuser && (
+												<button type="button" onClick={() => setCrediting(user)}>
+													Give credit
 												</button>
 											)}
 											{!locked && !user.banned && (
@@ -246,6 +254,7 @@ function Admin() {
 			</section>
 
 			{budgeting && <Allowance user={budgeting} onClose={() => setBudgeting(null)} />}
+			{crediting && <Credit user={crediting} onClose={() => setCrediting(null)} />}
 			{deleting && (
 				<Confirm
 					open
@@ -272,18 +281,53 @@ function Allowance({ user, onClose }: { user: UserRow; onClose: () => void }) {
 	const valid = value.trim() !== "" && Number.isFinite(amount) && amount >= 0;
 	return (
 		<Confirm.Form
-			title="Change allowance"
+			title="Change spend cap"
 			onClose={onClose}
 			busy={busy || !valid || amount === user.monthlyBudgetUsd}
-			action="Save allowance"
+			action="Save cap"
 			onSubmit={async () => {
-				if (await act(() => op("admin.user_update", { userId: user.id, monthlyBudgetUsd: amount }), "Saved allowance")) onClose();
+				if (await act(() => op("admin.user_update", { userId: user.id, monthlyBudgetUsd: amount }), "Saved spend cap")) onClose();
 			}}
 		>
 			<label className="field">
-				<span className="name">Monthly allowance for {user.name || user.email}, in US dollars</span>
+				<span className="name">Monthly spend cap for {user.name || user.email}, in billed US dollars</span>
 				<input inputMode="decimal" value={value} onChange={(event) => setValue(event.target.value)} autoFocus />
-				<span className="hint">They have spent {usd(user.spentThisMonthUsd)} so far this month.</span>
+				<span className="hint">They have been charged {usd(user.spentThisMonthUsd)} so far this month. Paid work stops at the cap (plus any credit).</span>
+			</label>
+		</Confirm.Form>
+	);
+}
+
+function Credit({ user, onClose }: { user: UserRow; onClose: () => void }) {
+	const { busy, act } = useAct();
+	const [value, setValue] = useState("");
+	const [note, setNote] = useState("");
+	const amount = Number(value);
+	const valid = value.trim() !== "" && Number.isFinite(amount) && amount !== 0 && amount >= -user.creditUsd;
+	return (
+		<Confirm.Form
+			title="Give credit"
+			onClose={onClose}
+			busy={busy || !valid}
+			action={amount < 0 ? "Take back credit" : "Give credit"}
+			onSubmit={async () => {
+				const done = await act(
+					() => op("admin.credit_grant", { userId: user.id, amountUsd: amount, note: note.trim() || undefined }),
+					amount < 0 ? "Took back credit" : "Gave credit",
+				);
+				if (done) onClose();
+			}}
+		>
+			<label className="field">
+				<span className="name">Credit for {user.name || user.email}, in US dollars</span>
+				<input inputMode="decimal" placeholder="20" value={value} onChange={(event) => setValue(event.target.value)} autoFocus />
+				<span className="hint">
+					They have {usd(user.creditUsd)} unspent. Credit is used before their payment method is charged. A negative amount takes unspent credit back.
+				</span>
+			</label>
+			<label className="field">
+				<span className="name">Note (optional)</span>
+				<input value={note} maxLength={300} placeholder="Why, e.g. refund for a failed render" onChange={(event) => setNote(event.target.value)} />
 			</label>
 		</Confirm.Form>
 	);

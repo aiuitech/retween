@@ -14,7 +14,7 @@ export async function loadMe(): Promise<Me | null> {
 	return me;
 }
 
-/** Call after changing anything `Me` carries (name, budget), before reloading the page's data. */
+/** Call after changing anything `Me` carries (name, budget, billing), before reloading the page's data. */
 export const forgetMe = () => {
 	kept = undefined;
 };
@@ -25,7 +25,7 @@ export const safePath = (value: unknown): string | undefined => (typeof value ==
 /** For the pages that need an account in good standing. */
 export function requireActive(me: Me | null, href: string): Me {
 	if (!me) throw redirect({ to: "/sign-in", search: { redirect: href } });
-	if (me.banned || !me.approved) throw redirect({ to: "/pending" });
+	if (me.banned || me.billing === "required") throw redirect({ to: "/billing" });
 	return me;
 }
 

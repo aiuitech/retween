@@ -14,7 +14,8 @@ const tidy = (code: string) => code.replace(/[^A-Za-z0-9]/g, "").toUpperCase();
 
 function Device() {
 	const context = Route.useRouteContext();
-	const me = context.me && context.me.approved && !context.me.banned ? context.me : null;
+	const me = context.me && context.me.billing !== "required" && !context.me.banned ? context.me : null;
+	const needsBilling = context.me?.billing === "required" && !context.me.banned;
 	const search = Route.useSearch();
 	const initial = String(search.user_code ?? "");
 	const [code, setCode] = useState(initial.toUpperCase());
@@ -51,6 +52,18 @@ function Device() {
 		setBusy(false);
 	};
 
+	if (needsBilling) {
+		return (
+			<Slate kind="Command-line sign-in" title="Add a payment method first.">
+				<p>The CLI can connect once billing is set up. Nothing is charged now: usage is billed at the end of each month.</p>
+				<div className="choices">
+					<a className="btn" href="/api/billing/setup">
+						Add a payment method
+					</a>
+				</div>
+			</Slate>
+		);
+	}
 	if (!me) {
 		return (
 			<Slate kind="Command-line sign-in" title="Sign in to connect the CLI.">

@@ -4,6 +4,9 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 OPENROUTER_API_KEY=
 ELEVENLABS_API_KEY=
+# Stripe sandbox keys. Forward webhooks with: stripe listen --forward-to localhost:5173/api/stripe/webhook
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
 # Optional: more and better free stock (both keys are free)
 # PEXELS_API_KEY=
 # PIXABAY_API_KEY=

@@ -11,9 +11,9 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppRouteImport } from './routes/_app'
+import { Route as BillingRouteImport } from './routes/billing'
 import { Route as ConsentRouteImport } from './routes/consent'
 import { Route as DeviceRouteImport } from './routes/device'
-import { Route as PendingRouteImport } from './routes/pending'
 import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppAccountRouteRouteImport } from './routes/_app/account/route'
 import { Route as AppAdminRouteImport } from './routes/_app/admin'
@@ -41,6 +41,11 @@ const AppRoute = AppRouteImport.update({
   id: '/_app',
   getParentRoute: () => rootRouteImport,
 } as any)
+const BillingRoute = BillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ConsentRoute = ConsentRouteImport.update({
   id: '/consent',
   path: '/consent',
@@ -49,11 +54,6 @@ const ConsentRoute = ConsentRouteImport.update({
 const DeviceRoute = DeviceRouteImport.update({
   id: '/device',
   path: '/device',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PendingRoute = PendingRouteImport.update({
-  id: '/pending',
-  path: '/pending',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignInRoute = SignInRouteImport.update({
@@ -152,9 +152,9 @@ const AppProjectsProjectIdVideosVideoIdRendersRenderIdRoute =
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/billing': typeof BillingRoute
   '/consent': typeof ConsentRoute
   '/device': typeof DeviceRoute
-  '/pending': typeof PendingRoute
   '/sign-in': typeof SignInRoute
   '/account': typeof AppAccountRouteRouteWithChildren
   '/admin': typeof AppAdminRoute
@@ -174,9 +174,9 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/billing': typeof BillingRoute
   '/consent': typeof ConsentRoute
   '/device': typeof DeviceRoute
-  '/pending': typeof PendingRoute
   '/sign-in': typeof SignInRoute
   '/admin': typeof AppAdminRoute
   '/connect': typeof AppConnectRoute
@@ -195,9 +195,9 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/_app': typeof AppRouteWithChildren
+  '/billing': typeof BillingRoute
   '/consent': typeof ConsentRoute
   '/device': typeof DeviceRoute
-  '/pending': typeof PendingRoute
   '/sign-in': typeof SignInRoute
   '/_app/account': typeof AppAccountRouteRouteWithChildren
   '/_app/admin': typeof AppAdminRoute
@@ -220,9 +220,9 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/billing'
     | '/consent'
     | '/device'
-    | '/pending'
     | '/sign-in'
     | '/account'
     | '/admin'
@@ -242,9 +242,9 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/billing'
     | '/consent'
     | '/device'
-    | '/pending'
     | '/sign-in'
     | '/admin'
     | '/connect'
@@ -262,9 +262,9 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/_app'
+    | '/billing'
     | '/consent'
     | '/device'
-    | '/pending'
     | '/sign-in'
     | '/_app/account'
     | '/_app/admin'
@@ -287,9 +287,9 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
+  BillingRoute: typeof BillingRoute
   ConsentRoute: typeof ConsentRoute
   DeviceRoute: typeof DeviceRoute
-  PendingRoute: typeof PendingRoute
   SignInRoute: typeof SignInRoute
 }
 
@@ -309,6 +309,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/billing': {
+      id: '/billing'
+      path: '/billing'
+      fullPath: '/billing'
+      preLoaderRoute: typeof BillingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/consent': {
       id: '/consent'
       path: '/consent'
@@ -321,13 +328,6 @@ declare module '@tanstack/react-router' {
       path: '/device'
       fullPath: '/device'
       preLoaderRoute: typeof DeviceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/pending': {
-      id: '/pending'
-      path: '/pending'
-      fullPath: '/pending'
-      preLoaderRoute: typeof PendingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-in': {
@@ -546,9 +546,9 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
+  BillingRoute: BillingRoute,
   ConsentRoute: ConsentRoute,
   DeviceRoute: DeviceRoute,
-  PendingRoute: PendingRoute,
   SignInRoute: SignInRoute,
 }
 export const routeTree = rootRouteImport

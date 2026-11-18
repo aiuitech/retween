@@ -41,7 +41,14 @@ export interface Actor {
 	name: string;
 	image: string | null;
 	isAdmin: boolean;
-	approved: boolean;
+	/** Listed in SUPERUSER_EMAILS: can grant credit and run invoicing. */
+	isSuperuser: boolean;
+	/**
+	 * exempt: an administrator, never billed. active: a payment method is on file.
+	 * required: no payment method yet, so the account cannot be used.
+	 * past_due: an invoice went unpaid; paid work is refused until it is settled.
+	 */
+	billing: "exempt" | "active" | "required" | "past_due";
 	banned: boolean;
 	monthlyBudgetCents: number;
 	/** How the caller authenticated. */
@@ -58,7 +65,8 @@ function toActor(user: UserRow, via: Actor["via"]): Actor {
 		name: user.name,
 		image: user.image ?? null,
 		isAdmin,
-		approved: isAdmin || user.approved === true,
+		isSuperuser: superuserEmails.includes(user.email.toLowerCase()),
+		billing: isAdmin ? "exempt" : user.billingStatus === "active" ? "active" : user.billingStatus === "past_due" ? "past_due" : "required",
 		banned: user.banned === true && (!user.banExpires || user.banExpires > new Date()),
 		monthlyBudgetCents: user.monthlyBudgetCents ?? 0,
 		via,
@@ -91,7 +99,11 @@ export async function actorFromRequest(request: Request): Promise<Actor | null> 
 export function assertActive(actor: Actor | null): asserts actor is Actor {
 	if (!actor) throw new AppError(401, "Sign in to continue", "unauthenticated");
 	if (actor.banned) throw forbidden("This account has been suspended", "suspended");
-	if (!actor.approved) {
-		throw forbidden("Your account is waiting for approval by an administrator", "pending_approval");
+	if (actor.billing === "required") {
+		throw new AppError(
+			402,
+			`Add a payment method at ${env.APP_URL}/billing to start using Retween. Nothing is charged up front: usage is billed at the end of each month.`,
+			"billing_required",
+		);
 	}
 }

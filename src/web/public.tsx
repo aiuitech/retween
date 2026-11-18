@@ -46,7 +46,7 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 					<button type="button" className="btn big" onClick={() => signIn(next)}>
 						Continue with Google
 					</button>
-					<span className="soft">New accounts are approved by an administrator.</span>
+					<span className="soft">Pay as you go: billed monthly for what you use, with a spend cap.</span>
 				</div>
 			</div>
 

@@ -26,8 +26,9 @@ export const user = sqliteTable("user", {
   banned: integer("banned", { mode: "boolean" }).default(false),
   banReason: text("ban_reason"),
   banExpires: integer("ban_expires", { mode: "timestamp_ms" }),
-  approved: integer("approved", { mode: "boolean" }).default(false),
   monthlyBudgetCents: integer("monthly_budget_cents").default(0),
+  stripeCustomerId: text("stripe_customer_id"),
+  billingStatus: text("billing_status").default("none"),
 });
 
 export const session = sqliteTable(

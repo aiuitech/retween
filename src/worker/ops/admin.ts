@@ -3,6 +3,7 @@ import { z } from "zod";
 import { superuserEmails } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
 import { badRequest, notFound, startOfMonthUtc } from "../lib/util.ts";
+import { chargeFor, creditBalanceMicros, markup } from "../services/billing.ts";
 import { reconcileContainers, reconcileFal } from "../services/reconcile.ts";
 import { deletePrefix } from "../services/storage.ts";
 import { defineOp } from "./registry.ts";
@@ -18,11 +19,14 @@ async function userRow(user: typeof schema.user.$inferSelect, spent: Map<string,
 		image: user.image,
 		role: isAdmin ? "admin" : "user",
 		superuser: superuserEmails.includes(user.email.toLowerCase()),
-		approved: isAdmin || user.approved === true,
+		/** exempt (administrators), active (payment method on file), none (not set up yet), past_due (an invoice is unpaid). */
+		billing: isAdmin ? "exempt" : (user.billingStatus ?? "none"),
 		banned: user.banned === true,
 		banReason: user.banReason ?? undefined,
 		monthlyBudgetUsd: (user.monthlyBudgetCents ?? 0) / 100,
-		spentThisMonthUsd: usd(spent.get(user.id) ?? 0),
+		/** Billed amount (markup included) so far this month. */
+		spentThisMonthUsd: usd(chargeFor(spent.get(user.id) ?? 0)),
+		creditUsd: usd(await creditBalanceMicros(user.id)),
 		projects: projects.get(user.id) ?? 0,
 		createdAt: user.createdAt,
 	};
@@ -46,12 +50,12 @@ export const adminOps = [
 	defineOp({
 		name: "admin.users",
 		title: "List users",
-		description: "Everyone who has signed in, with approval state, role, budget and this month's spend.",
+		description: "Everyone who has signed in, with billing status, role, spend cap, credit and this month's charges (as billed, markup included).",
 		admin: true,
 		readOnly: true,
 		input: z.object({
 			search: z.string().max(100).optional().describe("Match name or email"),
-			status: z.enum(["pending", "approved", "banned"]).optional(),
+			status: z.enum(["no_billing", "active", "past_due", "banned"]).optional().describe("no_billing: signed in but no payment method yet"),
 			limit: z.number().int().min(1).max(200).default(100),
 			offset: z.number().int().min(0).default(0),
 		}),
@@ -60,20 +64,23 @@ export const adminOps = [
 			const where = and(
 				input.search ? or(like(schema.user.email, `%${input.search}%`), like(schema.user.name, `%${input.search}%`)) : undefined,
 				input.status === "banned" ? eq(schema.user.banned, true) : undefined,
-				input.status === "pending" ? sql`coalesce(${schema.user.approved}, 0) = 0 and not ${isAdmin}` : undefined,
-				input.status === "approved" ? sql`(${schema.user.approved} = 1 or ${isAdmin})` : undefined,
+				input.status === "no_billing" ? sql`coalesce(${schema.user.billingStatus}, 'none') = 'none' and not ${isAdmin}` : undefined,
+				input.status === "active" ? sql`(${schema.user.billingStatus} = 'active' or ${isAdmin})` : undefined,
+				input.status === "past_due" ? sql`${schema.user.billingStatus} = 'past_due' and not ${isAdmin}` : undefined,
 			);
-			const [rows, [total], [pending], spent, projects] = await Promise.all([
+			const [rows, [total], [noBilling], [pastDue], spent, projects] = await Promise.all([
 				db.query.user.findMany({ where, orderBy: desc(schema.user.createdAt), limit: input.limit, offset: input.offset }),
 				db.select({ n: count() }).from(schema.user).where(where),
-				db.select({ n: count() }).from(schema.user).where(sql`coalesce(${schema.user.approved}, 0) = 0 and not ${isAdmin}`),
+				db.select({ n: count() }).from(schema.user).where(sql`coalesce(${schema.user.billingStatus}, 'none') = 'none' and not ${isAdmin}`),
+				db.select({ n: count() }).from(schema.user).where(sql`${schema.user.billingStatus} = 'past_due' and not ${isAdmin}`),
 				spendByUser(),
 				projectsByUser(),
 			]);
 			return {
 				users: await Promise.all(rows.map((row) => userRow(row, spent, projects))),
 				total: total?.n ?? 0,
-				pendingApproval: pending?.n ?? 0,
+				noBilling: noBilling?.n ?? 0,
+				pastDue: pastDue?.n ?? 0,
 			};
 		},
 	}),
@@ -81,20 +88,19 @@ export const adminOps = [
 	defineOp({
 		name: "admin.user_update",
 		title: "Update user",
-		description: "Approve or un-approve a user, change their role, set their monthly generation budget, or suspend them.",
+		description: "Change a user's role, set their monthly spend cap (in billed dollars, markup included), or suspend them. Access itself comes from adding a payment method.",
 		admin: true,
 		input: z.object({
 			userId: z.string(),
-			approved: z.boolean().optional(),
 			role: z.enum(["admin", "user"]).optional(),
-			monthlyBudgetUsd: z.number().min(0).max(100000).optional(),
+			monthlyBudgetUsd: z.number().min(0).max(100000).optional().describe("Monthly spend cap in billed US dollars"),
 			banned: z.boolean().optional(),
 			banReason: z.string().max(300).optional(),
 		}),
 		handler: async (input, { actor }) => {
 			const user = await db.query.user.findFirst({ where: eq(schema.user.id, input.userId) });
 			if (!user) throw notFound("User");
-			const restricting = input.approved === false || input.banned === true || input.role === "user";
+			const restricting = input.banned === true || input.role === "user";
 			if (restricting && user.id === actor.id) throw badRequest("You cannot remove your own access");
 			if (restricting && superuserEmails.includes(user.email.toLowerCase())) {
 				throw badRequest("This account is a configured superuser and cannot be restricted here");
@@ -102,7 +108,6 @@ export const adminOps = [
 			const [updated] = await db
 				.update(schema.user)
 				.set({
-					...(input.approved !== undefined ? { approved: input.approved } : {}),
 					...(input.role ? { role: input.role } : {}),
 					...(input.monthlyBudgetUsd !== undefined ? { monthlyBudgetCents: Math.round(input.monthlyBudgetUsd * 100) } : {}),
 					...(input.banned !== undefined
@@ -112,7 +117,7 @@ export const adminOps = [
 				.where(eq(schema.user.id, user.id))
 				.returning();
 			// Losing access takes effect at once: existing sign-ins are ended.
-			if (input.banned === true || input.approved === false) {
+			if (input.banned === true) {
 				await db.delete(schema.session).where(eq(schema.session.userId, user.id));
 			}
 			return { user: await userRow(updated!, await spendByUser(), await projectsByUser()) };
@@ -143,7 +148,7 @@ export const adminOps = [
 	defineOp({
 		name: "admin.stats",
 		title: "Service stats",
-		description: "Totals across the service: users, projects, videos, renders, and this month's spend by kind.",
+		description: "Totals across the service: users, projects, videos, renders, and this month's vendor cost and billed charges by kind.",
 		admin: true,
 		readOnly: true,
 		input: z.object({}),
@@ -168,6 +173,8 @@ export const adminOps = [
 				assets: assets?.n ?? 0,
 				storedBytes: assets?.bytes ?? 0,
 				spendThisMonthUsd: usd(spend.reduce((total, row) => total + row.total, 0)),
+				chargesThisMonthUsd: usd(chargeFor(spend.reduce((total, row) => total + row.total, 0))),
+				markup: markup(),
 				spendByKind: spend.map((row) => ({ kind: row.kind, usd: usd(row.total), events: row.events })),
 			};
 		},
@@ -179,7 +186,7 @@ export const adminOps = [
 		description:
 			"What each account cost to serve over a period, from the usage ledger: every vendor charge (OpenRouter, ElevenLabs, fal, " +
 			"Cloudflare containers and storage) attributed to the person who caused it, broken down by provider, kind and model. " +
-			"Pass a markup to get the amount to bill (cost × markup). `basis` says how exact each cost is: vendor (reported by the vendor), " +
+			"chargeUsd is what is billed (cost × markup; the configured BILLING_MARKUP unless one is passed). `basis` says how exact each cost is: vendor (reported by the vendor), " +
 			"metered (vendor-reported or measured units × our rate), list (published list price).",
 		admin: true,
 		readOnly: true,
@@ -187,9 +194,10 @@ export const adminOps = [
 			userId: z.string().optional().describe("One account; omit for every account with charges in the period"),
 			from: z.iso.date().optional().describe("First day, inclusive (UTC). Default: the first of this month"),
 			to: z.iso.date().optional().describe("Last day, inclusive (UTC). Default: today"),
-			markup: z.number().min(0).max(100).default(1).describe("Multiplier applied to cost, e.g. 1.3 for 30% on top"),
+			markup: z.number().min(0).max(100).optional().describe("Multiplier applied to cost, e.g. 1.4 for 40% on top. Default: the configured BILLING_MARKUP"),
 		}),
-		handler: async (input) => {
+		handler: async ({ markup: givenMarkup, ...input }) => {
+			const factor = givenMarkup ?? markup();
 			const from = input.from ? new Date(`${input.from}T00:00:00Z`) : startOfMonthUtc();
 			const to = input.to ? new Date(Date.parse(`${input.to}T00:00:00Z`) + 86_400_000) : new Date();
 			if (!(to > from)) throw badRequest("`to` must be on or after `from`");
@@ -240,13 +248,13 @@ export const adminOps = [
 				.map(({ micros, byBasis, ...account }) => ({
 					...account,
 					costUsd: precise(micros),
-					chargeUsd: cents(micros * input.markup),
+					chargeUsd: cents(micros * factor),
 					costByBasisUsd: Object.fromEntries(Object.entries(byBasis).map(([basis, value]) => [basis, precise(value)])),
 				}));
 			const totalMicros = [...accounts.values()].reduce((sum, account) => sum + account.micros, 0);
 			return {
 				period: { from: from.toISOString(), to: to.toISOString() },
-				markup: input.markup,
+				markup: factor,
 				totalCostUsd: precise(totalMicros),
 				totalChargeUsd: statements.reduce((sum, statement) => Math.round((sum + statement.chargeUsd) * 100) / 100, 0),
 				statements,
