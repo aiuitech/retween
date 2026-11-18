@@ -15,13 +15,13 @@ const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
 /**
  * Packs tiles left to right into rows no wider than `maxWidth`. Every tile
- * gets the same height unless it would not fit across the sheet on its own,
+ * gets the same height (or the one it asks for) unless it would not fit across the sheet on its own,
  * in which case it is shrunk to the sheet's width.
  *
  * A bare sheet (one tile, no labels, no padding) is just that tile, so a single
  * preview frame comes out at exactly the size it was asked for.
  */
-export function sheetGeometry(aspects: number[], options: { tileHeight: number; maxWidth: number; bare?: boolean }): SheetGeometry {
+export function sheetGeometry(aspects: number[], options: { tileHeight: number; maxWidth: number; bare?: boolean; heights?: (number | undefined)[] }): SheetGeometry {
 	const bare = options.bare ?? false;
 	const pad = bare ? 0 : 16;
 	const gap = bare ? 0 : 12;
@@ -33,8 +33,9 @@ export function sheetGeometry(aspects: number[], options: { tileHeight: number; 
 	let y = pad;
 	let rowHeight = 0;
 	let right = 0;
-	for (const aspect of aspects) {
-		let h = options.tileHeight;
+	for (const [i, aspect] of aspects.entries()) {
+		// A tile may ask for its own height, e.g. a thumbnail shown at its real size in a feed.
+		let h = options.heights?.[i] ?? options.tileHeight;
 		let w = Math.round(h * aspect);
 		if (w > usable) {
 			w = usable;

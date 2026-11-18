@@ -10,6 +10,7 @@ import type { RenderStatus } from "../db/schema.ts";
 import { rendererFetch, stopRenderer } from "../renderer.ts";
 import { renderProps } from "../services/renders.ts";
 import { renderKey } from "../services/storage.ts";
+import { posterFrame, posterKey } from "../services/thumbnails.ts";
 
 const PART_BYTES = 16 * 1024 * 1024;
 const network = { retries: { limit: 4, delay: "5 seconds", backoff: "exponential" }, timeout: "5 minutes" } as const;
@@ -131,6 +132,26 @@ export class RenderWorkflow extends WorkflowEntrypoint<Env, RenderParams> {
 					warnings,
 					finishedAt,
 				});
+			});
+			// The poster: a still of the opening in this export's shape, taken while the container is still up.
+			// Nice to have, so a failure here never fails the export.
+			await step.do("poster", { retries: { limit: 1, delay: "3 seconds" }, timeout: "2 minutes" }, async () => {
+				try {
+					const render = (await loadRender(renderId))!;
+					const props = await renderProps(render);
+					const scale = Math.min(1, 720 / Math.min(render.width, render.height));
+					const response = await rendererFetch(renderId, "/still", {
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify({ props, frame: posterFrame(render.timeline), format: "jpeg", scale: Math.max(0.1, Math.round(scale * 100) / 100) }),
+					});
+					if (!response.ok) throw new Error(`still ${response.status}: ${(await response.text()).slice(0, 200)}`);
+					const key = posterKey(render.projectId, renderId);
+					await env.MEDIA.put(key, await response.arrayBuffer(), { httpMetadata: { contentType: "image/jpeg" } });
+					await update(renderId, { posterKey: key });
+				} catch (error) {
+					console.warn("could not take a poster still", renderId, error instanceof Error ? error.message : error);
+				}
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

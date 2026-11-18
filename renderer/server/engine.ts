@@ -453,7 +453,7 @@ export function renderSheetImage(spec: SheetSpec, options: { format: "jpeg" | "p
 		const started = Date.now();
 		const warnings: string[] = [];
 		let resolved: Resolved | undefined;
-		if (spec.timeline && spec.tiles.some((tile) => tile.kind === "frame")) {
+		if (spec.timeline && spec.tiles.some((tile) => tile.kind === "frame" || tile.kind === "thumbnail")) {
 			const preflight = await preflightFor(spec.timeline);
 			resolved = preflight.resolved;
 			warnings.push(...preflight.warnings);

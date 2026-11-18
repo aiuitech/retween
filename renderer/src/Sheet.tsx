@@ -18,6 +18,8 @@ import { useState } from "react";
 import { Video } from "@remotion/media";
 import { AbsoluteFill, type CalculateMetadataFunction, Freeze, Img, useVideoConfig } from "remotion";
 import { preflight, probe } from "./lib/preflight.ts";
+import type { ThumbnailOverlay as Overlay } from "../../shared/thumbnail.ts";
+import { DurationBadge, ThumbnailOverlay } from "./components/ThumbnailOverlay.tsx";
 import { type SheetGeometry, sheetGeometry } from "./lib/sheet.ts";
 import type { Resolved, Timeline } from "./types.ts";
 import { VideoComposition } from "./Video.tsx";
@@ -27,7 +29,12 @@ export type SheetTile =
 	| { kind: "frame"; frame: number; width: number; height: number; label?: string }
 	| { kind: "image"; src: string; label?: string }
 	/** The frame of a video file at `atSec`. */
-	| { kind: "video"; src: string; atSec: number; label?: string };
+	| { kind: "video"; src: string; atSec: number; label?: string }
+	/**
+	 * A thumbnail: frame `frame` of the (thumbnail) timeline with `overlay` drawn over it, laid out at
+	 * width x height and shown `displayHeight` px tall, with the duration badge a feed would print over it.
+	 */
+	| { kind: "thumbnail"; frame: number; width: number; height: number; overlay: Overlay; label?: string; displayHeight?: number; badge?: string };
 
 export type SheetProps = {
 	/** Required by `frame` tiles. Asset references must already be signed URLs. */
@@ -49,14 +56,14 @@ export type SheetProps = {
 export const SHEET_FPS = 30;
 
 export const calculateSheetMetadata: CalculateMetadataFunction<SheetProps> = async ({ props }) => {
-	const needsTimeline = props.tiles.some((tile) => tile.kind === "frame");
+	const needsTimeline = props.tiles.some((tile) => tile.kind === "frame" || tile.kind === "thumbnail");
 	if (needsTimeline && !props.timeline) throw new Error("frame tiles need a timeline");
 	const resolved = needsTimeline ? (props.resolved ?? (await preflight({ timeline: props.timeline!, width: 1280, height: 720 }))) : undefined;
 
 	const failed: Record<number, string> = {};
 	const aspects = await Promise.all(
 		props.tiles.map(async (tile, i) => {
-			if (tile.kind === "frame") return tile.width / tile.height;
+			if (tile.kind === "frame" || tile.kind === "thumbnail") return tile.width / tile.height;
 			const info = await probe(tile.kind, tile.src);
 			if (!info.ok || !info.width || !info.height) {
 				failed[i] = info.error ?? "could not be read";
@@ -65,7 +72,8 @@ export const calculateSheetMetadata: CalculateMetadataFunction<SheetProps> = asy
 			return info.width / info.height;
 		}),
 	);
-	const geometry = sheetGeometry(aspects, { tileHeight: props.tileHeight, maxWidth: props.maxWidth, bare: props.bare });
+	const heights = props.tiles.map((tile) => (tile.kind === "thumbnail" ? tile.displayHeight : undefined));
+	const geometry = sheetGeometry(aspects, { tileHeight: props.tileHeight, maxWidth: props.maxWidth, bare: props.bare, heights });
 	return {
 		width: geometry.width,
 		height: geometry.height,
@@ -92,6 +100,13 @@ export const SheetComposition: React.FC<SheetProps> = ({ timeline, tiles, resolv
 								<Missing reason={failed[i]!} />
 							) : tile.kind === "frame" ? (
 								<FrameTile timeline={timeline!} resolved={resolved} tile={tile} index={i} w={box.w} />
+							) : tile.kind === "thumbnail" ? (
+								<>
+									<FrameTile timeline={timeline!} resolved={resolved} tile={tile} index={i} w={box.w}>
+										<ThumbnailOverlay overlay={tile.overlay} name={`thumb-${tile.frame + 1}`} />
+									</FrameTile>
+									{tile.badge ? <DurationBadge text={tile.badge} width={box.w} height={box.h} /> : null}
+								</>
 							) : tile.kind === "image" ? (
 								<ImageTile src={tile.src} />
 							) : (
@@ -123,16 +138,19 @@ export const SheetComposition: React.FC<SheetProps> = ({ timeline, tiles, resolv
 	);
 };
 
-const FrameTile: React.FC<{ timeline: Timeline; resolved?: Resolved; tile: Extract<SheetTile, { kind: "frame" }>; index: number; w: number }> = ({
+const FrameTile: React.FC<{ timeline: Timeline; resolved?: Resolved; tile: { frame: number; width: number; height: number }; index: number; w: number; children?: React.ReactNode }> = ({
 	timeline,
 	resolved,
 	tile,
 	index,
 	w,
+	children,
 }) => (
 	<div style={{ position: "absolute", left: 0, top: 0, width: tile.width, height: tile.height, transform: `scale(${w / tile.width})`, transformOrigin: "0 0" }}>
 		<Freeze frame={Math.min(tile.frame, timeline.durationInFrames - 1)}>
-			<VideoComposition timeline={timeline} resolved={resolved} width={tile.width} height={tile.height} audio={false} probe={String(index)} />
+			<VideoComposition timeline={timeline} resolved={resolved} width={tile.width} height={tile.height} audio={false} probe={String(index)}>
+				{children}
+			</VideoComposition>
 		</Freeze>
 	</div>
 );

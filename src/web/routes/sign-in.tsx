@@ -1,5 +1,6 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { Landing } from "../public.tsx";
+import { Landing } from "../landing.tsx";
+import landingStyles from "../landing.css?url";
 import { safePath } from "../session.ts";
 
 /**
@@ -11,6 +12,7 @@ export const Route = createFileRoute("/sign-in")({
 	beforeLoad: ({ context, search }) => {
 		if (context.me && !search.client_id) throw redirect({ href: safePath(search.redirect) ?? "/projects" });
 	},
+	head: () => ({ links: [{ rel: "stylesheet", href: landingStyles }] }),
 	component: SignIn,
 });
 

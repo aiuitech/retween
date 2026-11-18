@@ -1,31 +1,39 @@
 /*
- * Retween: an animator's desk.
+ * Retween: an animator's desk, and the multiplane camera on it.
  *
  * "Tweening" is drawing the frames between two key drawings. Animators do it on
- * a light table, in non-photo blue pencil, and write the timing on an exposure
- * sheet. So: a cool light-table ground, white cels for content, graphite text,
- * pencil blue for anything live or selected, key red for anything final or
- * destructive. The one flourish is the timing chart (two keys with eased ticks
- * between them), which stands in for every progress bar.
+ * a light table, in non-photo blue pencil, on clear cels stacked under a camera.
+ * So: a cool light-table ground, white cels for content, graphite text, pencil
+ * blue for anything live or selected, key red for anything final or destructive.
+ * The timing chart (two keys with eased ticks between them) stands in for every
+ * progress bar.
+ *
+ * Money has its own two colours, used for nothing else: label yellow for what a
+ * vendor charged, and marker orange for what Retween adds to it.
+ *
+ * One family, Mona Sans, across its width axis: condensed for app headings and
+ * price labels, regular for reading, wide for the public page.
  */
 :root {
-	--table: #f1f3ef;
+	--table: #eceff1;
 	--cel: #ffffff;
-	--graphite: #1e2227;
-	--lead: #565c63;
-	--lead-soft: #868c93;
-	--rule: #dcdfd8;
-	--rule-firm: #b7bcb3;
-	--blue: #1b6ec2;
+	--graphite: #171b21;
+	--lead: #535a63;
+	--lead-soft: #7f8790;
+	--rule: #d9dee2;
+	--rule-firm: #b4bbc2;
+	--blue: #1763c6;
 	--blue-pencil: #62aee8;
-	--blue-wash: #e6f1fb;
-	--red: #c52b43;
-	--red-wash: #fbeaed;
+	--blue-wash: #e4effb;
+	--red: #c8321a;
+	--red-wash: #fdebe6;
 	--green: #256f4c;
 	--amber: #8f5e00;
+	--label: #ffe14a;
+	--mark: #ff6a3d;
 
-	--display: "Bricolage Grotesque", "Arial Narrow", system-ui, sans-serif;
-	--body: "Instrument Sans", system-ui, sans-serif;
+	--display: "Mona Sans", "Arial Narrow", system-ui, sans-serif;
+	--body: "Mona Sans", system-ui, sans-serif;
 	--code: "IBM Plex Mono", ui-monospace, monospace;
 
 	--gutter: clamp(18px, 4vw, 48px);
@@ -143,9 +151,9 @@ code,
 	display: inline-flex;
 	align-items: center;
 	gap: 10px;
-	font: 700 1.22rem/1 var(--display);
-	font-stretch: 80%;
-	letter-spacing: -0.02em;
+	font: 700 1.14rem/1 var(--display);
+	font-stretch: 122%;
+	letter-spacing: -0.035em;
 	text-decoration: none;
 	color: var(--graphite);
 }
@@ -421,8 +429,8 @@ code,
 	color: var(--cel);
 }
 .btn.danger.solid:hover {
-	background: #a82137;
-	border-color: #a82137;
+	background: #a52814;
+	border-color: #a52814;
 }
 .btn.small {
 	padding: 5px 10px;
@@ -1055,79 +1063,6 @@ dl.details dd {
 	justify-content: space-between;
 	height: 64px;
 }
-.hero {
-	padding: clamp(36px, 8vh, 88px) 0 clamp(36px, 6vh, 64px);
-	max-width: 900px;
-}
-.hero h1 {
-	font-size: clamp(2.9rem, 8.2vw, 6.4rem);
-	font-weight: 700;
-	font-stretch: 78%;
-	line-height: 0.96;
-	letter-spacing: -0.012em;
-}
-.hero .lede {
-	margin-top: 26px;
-	font-size: 1.2rem;
-	line-height: 1.5;
-	color: var(--lead);
-	max-width: 58ch;
-}
-.hero .enter {
-	margin-top: 30px;
-	display: flex;
-	align-items: center;
-	gap: 16px;
-	flex-wrap: wrap;
-}
-
-.specimen-cap {
-	display: flex;
-	justify-content: space-between;
-	gap: 16px;
-	flex-wrap: wrap;
-	margin: 0 2px 10px;
-	color: var(--lead);
-}
-
-.steps {
-	display: grid;
-	grid-template-columns: repeat(4, 1fr);
-	gap: 28px;
-	margin: 56px 0 0;
-	padding: 0;
-	list-style: none;
-	counter-reset: step;
-}
-.steps li {
-	counter-increment: step;
-	border-top: 1px solid var(--graphite);
-	padding-top: 14px;
-	position: relative;
-}
-.steps li::before {
-	content: "";
-	position: absolute;
-	top: -5px;
-	left: 0;
-	width: 9px;
-	height: 9px;
-	rotate: 45deg;
-	background: var(--graphite);
-}
-.steps li:last-child::before {
-	background: var(--red);
-}
-.steps h3::before {
-	content: counter(step) ". ";
-	color: var(--lead-soft);
-	font-variant-numeric: tabular-nums;
-}
-.steps p {
-	margin-top: 6px;
-	color: var(--lead);
-}
-
 .stage {
 	min-height: calc(100vh - 64px);
 	display: grid;
@@ -1694,9 +1629,6 @@ label.check {
 		flex-direction: row;
 		overflow-x: auto;
 	}
-	.steps {
-		grid-template-columns: 1fr 1fr;
-	}
 	.with-aside,
 	.asset-sheet {
 		grid-template-columns: 1fr;
@@ -1725,9 +1657,6 @@ label.check {
 }
 
 @media (max-width: 520px) {
-	.steps {
-		grid-template-columns: 1fr;
-	}
 	.top nav a {
 		padding: 6px 8px;
 	}

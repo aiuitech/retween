@@ -1,0 +1,704 @@
+/*
+ * The public page: a multiplane camera.
+ *
+ * An animator gets depth by painting each part of a frame on its own sheet of
+ * glass and shooting down through the stack. Retween builds a frame the same
+ * way (picture, cut-out subject, type, captions), so the page takes one frame
+ * apart into real 3D sheets and lets scrolling put it back together. Glass is
+ * also the point of the pricing: nothing is hidden, and every part carries a
+ * price label. Yellow labels are what vendors charge; the one orange label is
+ * what Retween adds.
+ *
+ * Type is one family, Mona Sans, used across its width axis: wide for
+ * headings, regular for reading, condensed for price labels.
+ */
+
+@property --open {
+	syntax: "<number>";
+	inherits: true;
+	initial-value: 1;
+}
+
+.land {
+	--fold: 0;
+	--px: 0;
+	--py: 0;
+	--open: 1;
+	--pad: clamp(18px, 4.4vw, 64px);
+	overflow-x: clip;
+	font-size: 1.13rem;
+	line-height: 1.55;
+}
+.land h1,
+.land h2 {
+	font-stretch: 122%;
+	font-weight: 700;
+	letter-spacing: -0.035em;
+}
+.land h1 {
+	font-size: clamp(2.5rem, 4.1vw + 0.7rem, 4.9rem);
+	line-height: 1;
+}
+.land h2 {
+	font-size: clamp(1.7rem, 1.6vw + 1rem, 2.6rem);
+	line-height: 1.04;
+}
+.land p {
+	max-width: 38rem;
+}
+
+.land-top {
+	position: absolute;
+	inset: 0 0 auto;
+	z-index: 30;
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	height: 68px;
+	padding: 0 var(--pad);
+}
+.land-top nav {
+	display: flex;
+	align-items: center;
+	gap: clamp(14px, 2.4vw, 28px);
+	font-size: 0.97rem;
+}
+.land-top nav a {
+	font-weight: 500;
+	text-decoration: none;
+}
+
+/* A price-gun label. */
+.price {
+	--bite: 3px;
+	display: inline-block;
+	padding: 0.3em 0.8em 0.32em;
+	background: var(--label);
+	color: var(--graphite);
+	font: 800 1.05rem/1.1 var(--display);
+	font-stretch: 75%;
+	font-variant-numeric: tabular-nums;
+	letter-spacing: 0.015em;
+	white-space: nowrap;
+	rotate: -2deg;
+	-webkit-mask:
+		radial-gradient(circle var(--bite) at 0 50%, #0000 96%, #000) 0 0 / 51% 9px repeat-y,
+		radial-gradient(circle var(--bite) at 100% 50%, #0000 96%, #000) 100% 0 / 51% 9px repeat-y;
+	mask:
+		radial-gradient(circle var(--bite) at 0 50%, #0000 96%, #000) 0 0 / 51% 9px repeat-y,
+		radial-gradient(circle var(--bite) at 100% 50%, #0000 96%, #000) 100% 0 / 51% 9px repeat-y;
+}
+.price.ours {
+	background: var(--mark);
+}
+
+/* ------------------------------------------------------------ the story */
+
+.story {
+	display: grid;
+	grid-template-columns: minmax(0, 0.86fr) minmax(0, 1.14fr);
+	padding-left: var(--pad);
+}
+.story-copy {
+	grid-area: 1 / 1;
+	position: relative;
+	z-index: 2;
+}
+.story-stage {
+	grid-area: 1 / 2;
+	position: sticky;
+	top: 0;
+	height: 100svh;
+	align-self: start;
+}
+.step {
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: flex-start;
+	gap: 18px;
+	min-height: 86svh;
+	max-width: 33rem;
+}
+.step:last-child {
+	min-height: 100svh;
+}
+.step.opener {
+	gap: 0;
+	min-height: 100svh;
+	max-width: 42rem;
+	padding-top: 68px;
+}
+.opener .lede {
+	margin-top: 28px;
+	font-size: 1.2rem;
+	color: var(--lead);
+	max-width: 34rem;
+}
+.opener .enter {
+	margin-top: 32px;
+	display: flex;
+	align-items: center;
+	gap: 22px;
+	flex-wrap: wrap;
+	font-size: 1rem;
+}
+.opener .terms {
+	margin-top: 18px;
+	font-size: 0.93rem;
+	color: var(--lead);
+}
+.step > p {
+	color: var(--lead);
+}
+
+/* ------------------------------------------------------------ the stack */
+
+.mp {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	--w: min(40vw, 74svh, 700px);
+	perspective: 3000px;
+	perspective-origin: 50% 44%;
+	animation: mp-open 1.7s cubic-bezier(0.16, 0.84, 0.24, 1) 0.2s backwards;
+}
+@keyframes mp-open {
+	from {
+		--open: 0;
+	}
+}
+.mp-rig {
+	/* 1 when the sheets are fanned out, 0 when they are closed into a frame. */
+	--spread: calc(var(--open) * (1 - var(--fold)));
+	--ry: calc(var(--spread) * 31deg + var(--px) * 7deg);
+	--rx: calc(var(--spread) * 11deg + var(--py) * -5deg);
+	--gap: calc(var(--w) * (0.012 + 0.15 * var(--spread)));
+	position: relative;
+	width: var(--w);
+	aspect-ratio: 16 / 9;
+	transform-style: preserve-3d;
+	transform: translate3d(calc(var(--spread) * var(--w) * -0.04), calc(var(--spread) * var(--w) * 0.04), 0) scale(calc(0.94 + 0.2 * var(--fold))) rotateX(var(--rx))
+		rotateY(var(--ry));
+}
+.mp-plane {
+	position: absolute;
+	inset: 0;
+	transform: translateZ(calc((var(--z) - 2.5) * var(--gap)));
+	transition: opacity 0.4s;
+}
+/* The sheet of glass itself, wider than the picture it carries. */
+.mp-plane::before {
+	content: "";
+	position: absolute;
+	inset: -11% -4% -5%;
+	border-radius: calc(var(--w) * 0.014);
+	background: linear-gradient(112deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.01) 30%, rgb(255 255 255 / 0.09) 56%, rgb(255 255 255 / 0.01) 62%);
+	border: 1px solid rgb(255 255 255 / 0.92);
+	box-shadow:
+		0 0 0 1px rgb(36 104 94 / 0.22),
+		1.5px 2px 0 0 rgb(127 209 192 / 0.5),
+		inset 0 0 0 1px rgb(127 209 192 / 0.25);
+	opacity: calc(1 - var(--fold) * 1.6);
+}
+.mp-pegs {
+	position: absolute;
+	inset: -7.5% 0 auto;
+	display: flex;
+	justify-content: center;
+	gap: 17%;
+	opacity: calc(1 - var(--fold) * 1.6);
+}
+.mp-pegs i {
+	width: calc(var(--w) * 0.062);
+	height: calc(var(--w) * 0.02);
+	border-radius: 99px;
+	border: 1px solid rgb(23 27 33 / 0.3);
+	background: rgb(236 239 241 / 0.75);
+	box-shadow: inset 0 1px 2px rgb(23 27 33 / 0.22);
+}
+.mp-pegs i:nth-child(2) {
+	width: calc(var(--w) * 0.02);
+}
+
+.mp-art,
+.frame {
+	container-type: inline-size;
+	overflow: hidden;
+}
+.mp-art {
+	position: absolute;
+	inset: 0;
+	border-radius: calc(var(--w) * 0.008);
+}
+.frame {
+	position: relative;
+	aspect-ratio: 16 / 9;
+	border-radius: 4px;
+	background: #44679f;
+}
+.mp-art > img,
+.frame > img {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+.mp-art > img.cutout,
+.frame > img.cutout {
+	inset: auto 2.5% 5% auto;
+	width: auto;
+	height: 73%;
+	object-fit: contain;
+}
+.is-backdrop .mp-art {
+	box-shadow: 0 calc(var(--fold) * 34px) calc(var(--fold) * 70px) calc(var(--fold) * -18px) rgb(23 40 60 / 0.45);
+}
+.is-backdrop .contact {
+	position: absolute;
+	right: 3%;
+	bottom: 3%;
+	width: 30%;
+	height: 8%;
+	border-radius: 50%;
+	background: radial-gradient(closest-side, rgb(40 30 20 / 0.5), rgb(40 30 20 / 0));
+}
+.is-board {
+	opacity: calc(1 - var(--fold) * 1.6);
+}
+.guides {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	fill: none;
+	stroke: var(--blue-pencil);
+	stroke-width: 0.5;
+}
+
+/* Scrolling through the parts: the sheet being described stays, the rest stand back. */
+.land:not([data-lit="0"], [data-lit="5"]) .mp-plane {
+	opacity: 0.1;
+}
+.land[data-lit="1"] .mp-plane[data-lit="1"],
+.land[data-lit="2"] .mp-plane[data-lit="2"],
+.land[data-lit="3"] .mp-plane[data-lit="3"],
+.land[data-lit="4"] .mp-plane[data-lit="4"] {
+	opacity: 1;
+}
+.land[data-lit="1"] .is-board .mp-art {
+	background: rgb(255 255 255 / 0.86);
+}
+/* Alone on its glass, the title has no picture behind it, so it is drawn in graphite. */
+.mp-art .ad-title {
+	transition: color 0.4s;
+}
+.land[data-lit="3"] .mp-art .ad-title {
+	color: var(--graphite);
+	text-shadow: none;
+}
+
+.mp-tab {
+	position: absolute;
+	left: var(--at);
+	bottom: calc(111% - 0.5em);
+	font-size: calc(var(--w) * 0.03);
+	opacity: calc(1 - var(--fold) * 1.6);
+}
+.mp-tab .price {
+	font-size: 1em;
+}
+
+/* The light table the stack stands on. */
+.mp-floor {
+	position: absolute;
+	left: -34%;
+	width: 168%;
+	height: calc(var(--gap) * 10);
+	top: calc(105% - var(--gap) * 5);
+	transform: rotateX(90deg);
+	background: radial-gradient(closest-side, rgb(255 255 255 / 0.96) 30%, rgb(255 255 255 / 0));
+	opacity: var(--spread);
+}
+
+.mp-slate {
+	position: absolute;
+	left: 50%;
+	top: calc(50% + var(--w) * 0.36);
+	translate: -50% 0;
+	width: calc(var(--w) * 1.2);
+	max-width: none;
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	font-size: 0.9rem;
+	font-weight: 500;
+	color: var(--lead);
+	opacity: calc(var(--fold) * 3 - 2);
+}
+
+/* The roaster's advert, set in container units so it scales with whatever holds it. */
+.ad-title {
+	position: absolute;
+	left: 6cqw;
+	top: 10cqw;
+	max-width: none;
+	color: #fff;
+	font: 800 6.2cqw/0.98 var(--display);
+	font-stretch: 75%;
+	letter-spacing: -0.005em;
+	text-shadow: 0 0.2cqw 1.6cqw rgb(20 34 60 / 0.35);
+}
+.ad-caption {
+	position: absolute;
+	inset: auto 0 5cqw;
+	max-width: none;
+	text-align: center;
+	font: 600 2.9cqw/1.2 var(--body);
+	color: #fff;
+}
+.ad-caption span {
+	display: inline-block;
+	padding: 0.9cqw 2.2cqw 1cqw;
+	border-radius: 1cqw;
+	background: rgb(16 20 26 / 0.8);
+}
+.ad-caption b {
+	font-weight: 600;
+	color: var(--label);
+}
+.ad-lower {
+	position: absolute;
+	left: 5cqw;
+	bottom: 6cqw;
+	padding: 1.4cqw 2.6cqw;
+	background: #fff;
+	color: var(--graphite);
+	font: 800 4.6cqw/1 var(--display);
+	font-stretch: 75%;
+}
+.ad-stat,
+.ad-outro {
+	position: absolute;
+	inset: 0;
+	max-width: none;
+	display: grid;
+	place-content: center;
+	justify-items: center;
+	color: #fff;
+	font: 600 3.6cqw/1.2 var(--body);
+}
+.ad-stat b {
+	font: 800 24cqw/0.86 var(--display);
+	font-stretch: 75%;
+}
+.kind-outro {
+	background: #f4ecdc;
+}
+.ad-outro {
+	color: #2c2a26;
+	font: 800 8cqw/1 var(--display);
+	font-stretch: 75%;
+}
+.ad-bullets {
+	position: absolute;
+	right: 6cqw;
+	top: 50%;
+	translate: 0 -50%;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	color: #fff;
+	font: 800 5.4cqw/1.25 var(--display);
+	font-stretch: 75%;
+	text-shadow: 0 0.2cqw 1.6cqw rgb(20 34 60 / 0.4);
+}
+
+/* -------------------------------------------------------------- the bill */
+
+.cost,
+.ways,
+.agent {
+	max-width: 1320px;
+	margin: 0 auto;
+	padding: clamp(80px, 13vh, 150px) var(--pad) 0;
+}
+.cost-head p {
+	margin-top: 18px;
+	color: var(--lead);
+}
+.strip {
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	gap: 16px;
+	margin: 44px 0 0;
+	padding: 0;
+	list-style: none;
+	font-size: 0.93rem;
+	line-height: 1.45;
+}
+.strip-when {
+	display: flex;
+	gap: 10px;
+	margin-top: 12px;
+	font-weight: 650;
+}
+.strip-when .num {
+	color: var(--blue);
+}
+.strip-said {
+	margin-top: 4px;
+	color: var(--lead);
+}
+.strip-picture {
+	margin-top: 6px;
+	font-size: 0.87rem;
+	color: var(--lead-soft);
+}
+
+.bill {
+	display: grid;
+	grid-template-columns: minmax(0, 400px) minmax(0, 1fr);
+	gap: clamp(36px, 7vw, 110px);
+	align-items: start;
+	margin-top: clamp(64px, 10vh, 110px);
+}
+.receipt {
+	position: relative;
+	padding: 26px 26px 30px;
+	background: #fff;
+	font: 400 0.87rem/1.5 var(--code);
+	rotate: -1.3deg;
+	filter: drop-shadow(0 16px 22px rgb(23 40 60 / 0.16));
+}
+.receipt::after {
+	content: "";
+	position: absolute;
+	inset: 100% 0 auto;
+	height: 8px;
+	background: conic-gradient(from -45deg at bottom, #fff 90deg, #0000 0) 0 0 / 14px 8px repeat-x;
+}
+.receipt-head {
+	display: flex;
+	justify-content: space-between;
+	padding-bottom: 14px;
+	font-weight: 600;
+}
+.receipt table {
+	width: 100%;
+	border-collapse: collapse;
+}
+.receipt th {
+	padding: 5px 0;
+	text-align: left;
+	font-weight: 400;
+}
+.receipt th small {
+	margin-left: 1.2ch;
+	font-size: 1em;
+	color: var(--lead-soft);
+}
+.receipt td {
+	padding: 5px 0;
+	text-align: right;
+	vertical-align: top;
+	font-variant-numeric: tabular-nums;
+}
+.receipt tbody tr:first-child > * {
+	border-top: 1px dashed var(--rule-firm);
+	padding-top: 14px;
+}
+.receipt tbody tr:last-child > * {
+	padding-bottom: 14px;
+}
+.receipt mark {
+	margin: 0 -5px;
+	padding: 2px 5px;
+	background: color-mix(in srgb, var(--mark) 62%, #fff);
+	color: inherit;
+}
+.receipt tfoot > tr > * {
+	border-top: 1px dashed var(--rule-firm);
+	padding-top: 16px;
+	font: 700 1.9rem/1 var(--display);
+	font-stretch: 75%;
+	vertical-align: baseline;
+}
+.receipt tfoot th {
+	font-size: 1.15rem;
+}
+.receipt-foot {
+	margin-top: 18px;
+	color: var(--lead-soft);
+}
+.why {
+	display: grid;
+	gap: 16px;
+	padding-top: 8px;
+}
+.why h2 {
+	margin-bottom: 10px;
+}
+
+/* --------------------------------------------------------------- the rest */
+
+.ways table {
+	width: 100%;
+	margin-top: 36px;
+	border-collapse: collapse;
+}
+.ways thead th {
+	padding: 0 28px 18px 0;
+	text-align: left;
+	vertical-align: bottom;
+	font: 650 1.3rem/1.2 var(--display);
+	font-stretch: 110%;
+	letter-spacing: -0.02em;
+}
+.ways thead .price {
+	display: block;
+	width: fit-content;
+	margin-top: 10px;
+}
+.ways tbody th,
+.ways tbody td {
+	padding: 18px 28px 18px 0;
+	border-top: 1px solid var(--rule-firm);
+	text-align: left;
+	vertical-align: top;
+}
+.ways tbody th {
+	width: 12rem;
+	font-weight: 500;
+	color: var(--lead);
+}
+.ways tbody td {
+	width: 40%;
+}
+.ways-open {
+	margin-top: 26px;
+	color: var(--lead);
+}
+
+.agent {
+	display: grid;
+	grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+	gap: clamp(32px, 6vw, 96px);
+	align-items: start;
+}
+.agent p {
+	margin-top: 18px;
+	color: var(--lead);
+}
+.agent dl {
+	margin: 6px 0 0;
+}
+.agent dt {
+	font-size: 0.93rem;
+	font-weight: 600;
+}
+.agent dd {
+	margin: 6px 0 22px;
+}
+.agent code {
+	display: block;
+	padding: 12px 14px;
+	overflow-x: auto;
+	white-space: nowrap;
+	background: var(--cel);
+	border: 1px solid var(--rule);
+	border-radius: var(--radius);
+	font-size: 0.87rem;
+}
+
+.land-foot {
+	display: flex;
+	align-items: center;
+	gap: 14px 32px;
+	flex-wrap: wrap;
+	max-width: 1320px;
+	margin: clamp(90px, 14vh, 160px) auto 0;
+	padding: 26px var(--pad) 44px;
+	border-top: 1px solid var(--rule-firm);
+	font-size: 0.97rem;
+	color: var(--lead);
+}
+.land-foot p {
+	flex: 1;
+	min-width: 16rem;
+}
+
+/* ---------------------------------------------------------- small screens */
+
+@media (max-width: 899px) {
+	.story {
+		display: block;
+		padding-left: 0;
+	}
+	.story-stage {
+		z-index: 5;
+		height: 46svh;
+		background: linear-gradient(var(--table) 90%, transparent);
+	}
+	.mp {
+		--w: min(60vw, 46svh);
+		perspective: 1400px;
+	}
+	.story-copy {
+		padding: 0 var(--pad);
+	}
+	.step {
+		justify-content: flex-start;
+		min-height: 58svh;
+		padding-top: 5svh;
+	}
+	.step:last-child {
+		min-height: 70svh;
+	}
+	.step.opener {
+		min-height: 54svh;
+		padding-top: 8px;
+	}
+	.land-top nav a[href^="#"] {
+		display: none;
+	}
+	.strip {
+		grid-auto-flow: column;
+		grid-auto-columns: min(68vw, 300px);
+		grid-template-columns: none;
+		overflow-x: auto;
+		margin-inline: calc(-1 * var(--pad));
+		padding: 0 var(--pad) 12px;
+		scroll-snap-type: x proximity;
+	}
+	.strip li {
+		scroll-snap-align: start;
+		scroll-margin-left: var(--pad);
+	}
+	.bill,
+	.agent {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.receipt {
+		max-width: 400px;
+	}
+	.ways-scroll {
+		overflow-x: auto;
+		margin-inline: calc(-1 * var(--pad));
+		padding-inline: var(--pad);
+	}
+	.ways table {
+		min-width: 620px;
+	}
+	.ways tbody th {
+		width: 7.5rem;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.mp {
+		animation: none;
+	}
+}

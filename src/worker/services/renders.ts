@@ -54,6 +54,8 @@ export async function renderView(render: Render, title?: string) {
 		/** Plays in a browser. Valid for 24 hours; ask again for a fresh link. */
 		url: done ? await signedUrl(render.r2Key!, { expiresIn: 24 * 3600 }) : undefined,
 		downloadUrl: done ? await signedUrl(render.r2Key!, { expiresIn: 24 * 3600, downloadAs: name }) : undefined,
+		/** A still of the opening in this export's shape, for a player's poster frame. */
+		posterUrl: render.posterKey ? await signedUrl(render.posterKey, { expiresIn: 24 * 3600 }) : undefined,
 		createdAt: render.createdAt,
 		finishedAt: render.finishedAt ?? undefined,
 	};

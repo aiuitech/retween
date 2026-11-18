@@ -8,6 +8,7 @@ import { db, schema } from "../db/client.ts";
 import { AppError, badRequest, newId, notFound } from "../lib/util.ts";
 import { assetsById } from "../services/assets.ts";
 import { getProject } from "../services/projects.ts";
+import { posterFor } from "../services/thumbnails.ts";
 import { createRender, freshTimeline, getRender, renderView } from "../services/renders.ts";
 import { deletePrefix } from "../services/storage.ts";
 import { getControls, limitResolution } from "../services/controls.ts";
@@ -175,7 +176,8 @@ export const videoOps = [
 		handler: async (input, { actor }) => {
 			const { video, project } = await getVideo(actor, input.videoId);
 			const current = video.status === "preparing" && input.waitSeconds ? await waitWhilePreparing(video.id, input.waitSeconds) : video;
-			return { video: await videoDetail(current, project, detailOptions(input)) };
+			const [detail, poster] = await Promise.all([videoDetail(current, project, detailOptions(input)), posterFor(current)]);
+			return { video: { ...detail, thumbnailAssetId: current.thumbnailAssetId ?? undefined, poster } };
 		},
 	}),
 
@@ -233,7 +235,7 @@ export const videoOps = [
 		handler: async (input, { actor }) => {
 			const { video, project } = await getVideo(actor, input.videoId);
 			const renders = await db.query.renders.findMany({ where: eq(schema.renders.videoId, video.id) });
-			const keys = renders.map((render) => render.r2Key).filter((key): key is string => Boolean(key));
+			const keys = renders.flatMap((render) => [render.r2Key, render.posterKey]).filter((key): key is string => Boolean(key));
 			const generated = [
 				...Object.values(video.resolved.narration),
 				...Object.values(video.resolved.visual),
@@ -573,7 +575,8 @@ export const videoOps = [
 		destructive: true,
 		handler: async (input, { actor }) => {
 			const { render } = await getRender(actor, input.renderId);
-			if (render.r2Key) await env.MEDIA.delete(render.r2Key);
+			const keys = [render.r2Key, render.posterKey].filter((key): key is string => Boolean(key));
+			if (keys.length) await env.MEDIA.delete(keys);
 			await db.delete(schema.renders).where(eq(schema.renders.id, render.id));
 			return { deleted: render.id };
 		},

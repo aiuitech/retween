@@ -57,6 +57,13 @@
       "when": 1795024964299,
       "tag": "0007_usage_video",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1795027411249,
+      "tag": "0008_thumbnails_reviews",
+      "breakpoints": true
     }
   ]
 }

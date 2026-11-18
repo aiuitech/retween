@@ -209,6 +209,8 @@ export const videos = sqliteTable(
 		timeline: text("timeline", { mode: "json" }).$type<Timeline>(),
 		/** Hash of the storyboard + media the current timeline was composed from. */
 		composedFrom: text("composed_from"),
+		/** The chosen thumbnail (an image asset tagged `thumbnail`): published with the video and used as its poster. */
+		thumbnailAssetId: text("thumbnail_asset_id"),
 		createdAt: createdAt(),
 		updatedAt: updatedAt(),
 	},
@@ -242,6 +244,8 @@ export const renders = sqliteTable(
 		warnings: text("warnings", { mode: "json" }).$type<string[]>().notNull().default([]),
 		/** The exact timeline this render was made from. */
 		timeline: text("timeline", { mode: "json" }).$type<Timeline>().notNull(),
+		/** A still of the opening, in this render's shape, taken by the render container when it finished: the player's poster frame. */
+		posterKey: text("poster_key"),
 		createdBy: text("created_by").notNull(),
 		createdAt: createdAt(),
 		startedAt: integer("started_at", { mode: "timestamp_ms" }),
@@ -381,6 +385,97 @@ export const youtubeUploads = sqliteTable(
 		finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
 	},
 	(t) => [index("youtube_uploads_video_idx").on(t.videoId), index("youtube_uploads_user_idx").on(t.userId)],
+);
+
+export const REVIEW_VERDICTS = ["approved", "changes"] as const;
+export type ReviewVerdict = (typeof REVIEW_VERDICTS)[number];
+/** open: waiting for the person. submitted: they sent their notes. closed: replaced by a newer round, or withdrawn. */
+export type ReviewStatus = "open" | "submitted" | "closed";
+
+/** A scene as it was when a review was asked for, so comments map to scenes even after the storyboard changes. */
+export interface ReviewScene {
+	id: string;
+	n: number;
+	type: string;
+	startSec: number;
+	endSec: number;
+	/** What is on screen or said, in a line. */
+	summary: string;
+}
+
+/**
+ * A request for a person to watch a cut and leave notes on it. The agent asks
+ * (review.request) and hands over the link; the person comments on the review
+ * page in the web app and submits; the agent reads the notes with review.get.
+ * The link carries a token, so someone without a Retween account can review.
+ */
+export const reviews = sqliteTable(
+	"reviews",
+	{
+		id: text("id").primaryKey(),
+		videoId: text("video_id")
+			.notNull()
+			.references(() => videos.id, { onDelete: "cascade" }),
+		projectId: text("project_id")
+			.notNull()
+			.references(() => projects.id, { onDelete: "cascade" }),
+		/** The owner who asked for it. */
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** SHA-256 of the token in the review link. */
+		tokenHash: text("token_hash").notNull(),
+		/** 1 for the first review of a video, then counting up. */
+		round: integer("round").notNull().default(1),
+		status: text("status").$type<ReviewStatus>().notNull().default("open"),
+		/** What the agent wants the person to look at. */
+		ask: text("ask"),
+		aspect: text("aspect").$type<AspectRatio>().notNull(),
+		/** The draft cut being reviewed (R2 key) and the stretch of the video it covers. */
+		draftId: text("draft_id"),
+		mediaKey: text("media_key"),
+		fromSec: real("from_sec").notNull().default(0),
+		toSec: real("to_sec"),
+		scenes: text("scenes", { mode: "json" }).$type<ReviewScene[]>().notNull().default([]),
+		/** The storyboard hash at the time, to tell whether a newer cut exists. */
+		storyboardHash: text("storyboard_hash"),
+		verdict: text("verdict").$type<ReviewVerdict>(),
+		/** The person's overall note. */
+		summary: text("summary"),
+		reviewerName: text("reviewer_name"),
+		submittedAt: integer("submitted_at", { mode: "timestamp_ms" }),
+		/** When the agent last read the submitted notes. */
+		readAt: integer("read_at", { mode: "timestamp_ms" }),
+		expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [index("reviews_video_idx").on(t.videoId), index("reviews_project_idx").on(t.projectId, t.status)],
+);
+
+export const REVIEW_TAGS = ["cut", "too-slow", "too-fast", "wrong-picture", "mispronounced", "text", "sound", "love-it", "other"] as const;
+export type ReviewTag = (typeof REVIEW_TAGS)[number];
+
+export const reviewComments = sqliteTable(
+	"review_comments",
+	{
+		id: text("id").primaryKey(),
+		reviewId: text("review_id")
+			.notNull()
+			.references(() => reviews.id, { onDelete: "cascade" }),
+		/** Seconds into the video (not the draft) the note is about, when it is about a moment. */
+		atSec: real("at_sec"),
+		sceneId: text("scene_id"),
+		/** A point on the frame, 0–1 from the top-left, when the person clicked one. */
+		x: real("x"),
+		y: real("y"),
+		tag: text("tag").$type<ReviewTag>(),
+		body: text("body").notNull(),
+		/** What the agent did about it. */
+		resolution: text("resolution", { mode: "json" }).$type<{ status: "done" | "wontfix"; note?: string; at: number }>(),
+		createdAt: createdAt(),
+	},
+	(t) => [index("review_comments_review_idx").on(t.reviewId)],
 );
 
 /**

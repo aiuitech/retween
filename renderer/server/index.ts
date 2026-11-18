@@ -17,6 +17,7 @@
 import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import { pipeline } from "node:stream/promises";
+import { ThumbnailOverlay } from "../../shared/thumbnail.ts";
 import { RenderProps, Timeline } from "../../shared/timeline.ts";
 import type { SheetTile } from "../src/Sheet.tsx";
 import { analyseAudio } from "./audio.ts";
@@ -199,8 +200,18 @@ function parseTile(input: unknown, i: number): SheetTile {
 			if (typeof atSec !== "number" || !(atSec >= 0)) throw new HttpError(400, `tiles[${i}].atSec must be a number of seconds`);
 			return { kind: "video", src: src(), atSec, label };
 		}
+		case "thumbnail": {
+			const width = int(tile.width, `tiles[${i}].width`, 16, 4096);
+			const height = int(tile.height, `tiles[${i}].height`, 16, 4096);
+			const overlay = ThumbnailOverlay.safeParse(tile.overlay);
+			if (!overlay.success) throw new HttpError(400, `tiles[${i}].overlay - ${overlay.error.issues.slice(0, 4).map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
+			if (overlay.data.subject && !/^(https?:|data:)/.test(overlay.data.subject.src)) throw new HttpError(400, `tiles[${i}].overlay.subject.src must be an http(s) URL`);
+			const displayHeight = tile.displayHeight === undefined ? undefined : int(tile.displayHeight, `tiles[${i}].displayHeight`, 32, 2160);
+			const badge = tile.badge === undefined ? undefined : String(tile.badge).slice(0, 12);
+			return { kind: "thumbnail", frame: int(tile.frame, `tiles[${i}].frame`, 0, 10_000_000), width, height, overlay: overlay.data, label, displayHeight, badge };
+		}
 		default:
-			throw new HttpError(400, `tiles[${i}].kind must be "frame", "image" or "video"`);
+			throw new HttpError(400, `tiles[${i}].kind must be "frame", "image", "video" or "thumbnail"`);
 	}
 }
 
@@ -210,12 +221,15 @@ async function handleSheet(req: IncomingMessage, res: ServerResponse) {
 	if (!Array.isArray(body.tiles) || body.tiles.length === 0 || body.tiles.length > MAX_SHEET_TILES) throw new HttpError(400, `tiles must be an array of 1-${MAX_SHEET_TILES} tiles`);
 	const tiles = body.tiles.map(parseTile);
 	let timeline: Timeline | undefined;
-	if (tiles.some((tile) => tile.kind === "frame")) {
+	const framed = (tile: SheetTile) => tile.kind === "frame" || tile.kind === "thumbnail";
+	if (tiles.some(framed)) {
 		// The same checks a render gets, with the first frame tile's size standing in for the export's.
-		const first = tiles.find((tile) => tile.kind === "frame")!;
+		const first = tiles.find(framed) as Extract<SheetTile, { kind: "frame" | "thumbnail" }>;
 		timeline = parseProps({ timeline: body.timeline, width: first.width, height: first.height }).timeline;
 		for (const tile of tiles) {
-			if (tile.kind === "frame" && tile.frame >= timeline.durationInFrames) throw new HttpError(400, `frame ${tile.frame} is out of range: the timeline has ${timeline.durationInFrames} frames`);
+			if (framed(tile) && (tile as { frame: number }).frame >= timeline.durationInFrames) {
+				throw new HttpError(400, `frame ${(tile as { frame: number }).frame} is out of range: the timeline has ${timeline.durationInFrames} frames`);
+			}
 		}
 	}
 	const tileHeight = body.tileHeight === undefined ? 240 : int(body.tileHeight, "tileHeight", 48, 2160);

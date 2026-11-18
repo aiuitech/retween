@@ -127,7 +127,17 @@ const tidy = (messages: string[]) => [...new Set(messages.map((message) => messa
 export type SheetTile =
 	| { kind: "frame"; frame: number; width: number; height: number; label?: string }
 	| { kind: "image"; src: string; label?: string }
-	| { kind: "video"; src: string; atSec: number; label?: string };
+	| { kind: "video"; src: string; atSec: number; label?: string }
+	| {
+			kind: "thumbnail";
+			frame: number;
+			width: number;
+			height: number;
+			overlay: import("../../../shared/thumbnail.ts").ThumbnailOverlay;
+			label?: string;
+			displayHeight?: number;
+			badge?: string;
+	  };
 
 export interface Sheet {
 	bytes: Uint8Array;
@@ -160,7 +170,7 @@ export async function renderSheet(
 		quality?: number;
 	},
 ): Promise<Sheet> {
-	const source = options.tiles.some((tile) => tile.kind === "frame") ? options.timeline : undefined;
+	const source = options.tiles.some((tile) => tile.kind === "frame" || tile.kind === "thumbnail") ? options.timeline : undefined;
 	const timeline = source ? await resolveTimeline(source.projectId, source.timeline, 1800) : undefined;
 	const response = await postJson(actor, "/sheet", {
 		timeline,

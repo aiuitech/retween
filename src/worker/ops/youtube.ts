@@ -106,7 +106,11 @@ export const youtubeOps = [
 			notifySubscribers: z.boolean().default(true),
 			language: z.string().min(2).max(10).optional().describe("Language of the title, description and speech, e.g. en. Defaults to the brand's narration language"),
 			captions: z.boolean().default(true).describe("Upload captions timed to the narration"),
-			thumbnailAssetId: z.string().optional().describe("An image asset to use as the thumbnail (1280×720 recommended). Custom thumbnails need a verified YouTube channel"),
+			thumbnailAssetId: z
+				.string()
+				.nullable()
+				.optional()
+				.describe("An image asset to use as the thumbnail (1280×720 recommended). Defaults to the video's thumbnail (thumbnail.design); null for none. Custom thumbnails need a verified YouTube channel"),
 			playlistId: z.string().optional().describe("Add the video to this playlist on the channel"),
 			allowDuplicate: z.boolean().default(false).describe("Publish even though this render was already sent to this channel"),
 			waitSeconds,
@@ -137,13 +141,15 @@ export const youtubeOps = [
 				// YouTube only schedules private videos.
 				privacy = "private";
 			}
-			if (input.thumbnailAssetId) {
-				const thumbnail = (await assetsById(project.id, [input.thumbnailAssetId])).get(input.thumbnailAssetId);
+			const { video } = await getVideo(actor, render.videoId);
+			// The video's own thumbnail goes up with it unless another (or none) was asked for.
+			const thumbnailAssetId = input.thumbnailAssetId === null ? undefined : (input.thumbnailAssetId ?? video.thumbnailAssetId ?? undefined);
+			if (thumbnailAssetId) {
+				const thumbnail = (await assetsById(project.id, [thumbnailAssetId])).get(thumbnailAssetId);
 				if (!thumbnail || thumbnail.kind !== "image" || thumbnail.status !== "ready") throw badRequest("thumbnailAssetId must be a ready image asset in this project");
 				if (!["image/jpeg", "image/png"].includes(thumbnail.contentType ?? "")) throw badRequest("YouTube thumbnails must be JPEG or PNG");
 			}
 
-			const { video } = await getVideo(actor, render.videoId);
 			const request: YoutubePublishRequest = {
 				title: input.title ?? video.title.slice(0, 100),
 				description: input.description,
@@ -156,7 +162,7 @@ export const youtubeOps = [
 				notifySubscribers: input.notifySubscribers,
 				language: input.language ?? project.brand.narration?.language,
 				captions: input.captions,
-				thumbnailAssetId: input.thumbnailAssetId,
+				thumbnailAssetId,
 				playlistId: input.playlistId,
 			};
 			if (/[<>]/.test(request.title)) request.title = request.title.replace(/[<>]/g, "");

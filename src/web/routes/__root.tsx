@@ -5,7 +5,7 @@ import styles from "../styles.css?url";
 import { Empty, Toaster } from "../ui.tsx";
 
 const ICON =
-	"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%231e2227'/%3E%3Cpath d='M7 16h18' stroke='%23fff' stroke-width='1.6'/%3E%3Cpath d='M13 11.5v9M16 11.5v9M19 11.5v9' stroke='%2362aee8' stroke-width='1.6'/%3E%3Cpath d='M7 11.5 11.5 16 7 20.5 2.500 16z' fill='%23fff'/%3E%3Cpath d='M25 11.5 29.500 16 25 20.5 20.500 16z' fill='%23e0425a'/%3E%3C/svg%3E";
+	"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23171b21'/%3E%3Cpath d='M7 16h18' stroke='%23fff' stroke-width='1.6'/%3E%3Cpath d='M13 11.5v9M16 11.5v9M19 11.5v9' stroke='%2362aee8' stroke-width='1.6'/%3E%3Cpath d='M7 11.5 11.5 16 7 20.5 2.500 16z' fill='%23fff'/%3E%3Cpath d='M25 11.5 29.500 16 25 20.5 20.500 16z' fill='%23ff6a3d'/%3E%3C/svg%3E";
 
 export const Route = createRootRoute({
 	beforeLoad: async () => ({ me: await loadMe() }),
@@ -22,7 +22,7 @@ export const Route = createRootRoute({
 			{ rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
 			{
 				rel: "stylesheet",
-				href: "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wdth,wght@12..96,75..100,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=Instrument+Sans:wght@400..700&display=swap",
+				href: "https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Mona+Sans:wdth,wght@75..125,400..800&display=swap",
 			},
 			{ rel: "stylesheet", href: styles },
 		],

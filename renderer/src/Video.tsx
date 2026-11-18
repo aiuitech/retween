@@ -60,7 +60,8 @@ function useReady(props: VideoProps): Resolved | null {
 	return resolved;
 }
 
-export const VideoComposition: React.FC<VideoProps> = (props) => {
+/** `children` are drawn over the video, inside its render context (thumbnail overlays). */
+export const VideoComposition: React.FC<VideoProps & { children?: React.ReactNode }> = (props) => {
 	const { timeline, width, height } = props;
 	const resolved = useReady(props);
 
@@ -110,6 +111,7 @@ export const VideoComposition: React.FC<VideoProps> = (props) => {
 				})}
 				<Watermark />
 				<Captions />
+				{props.children}
 				{props.audio === false ? null : <AudioLayer />}
 			</AbsoluteFill>
 		</RenderProvider>

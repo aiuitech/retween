@@ -6,7 +6,7 @@
  * word timings, and keep what was heard then.
  */
 import { eq } from "drizzle-orm";
-import { type ReadDifference, compareRead } from "../../../shared/listen.ts";
+import { type ReadDifference, compareRead, tokens } from "../../../shared/listen.ts";
 import { type Issue, clock, round2 } from "../../../shared/inspect.ts";
 import type { SpokenWord } from "../../../shared/narration.ts";
 import type { Timeline } from "../../../shared/timeline.ts";
@@ -60,7 +60,8 @@ async function inBatches<T, R>(items: T[], size: number, work: (item: T) => Prom
 export interface SceneRead {
 	sceneId: string;
 	matched: number;
-	differences: (ReadDifference & { atVideoSec: number })[];
+	/** `respelled`: the script word is a pronunciation respelling, which a transcriber almost never spells back the same way. */
+	differences: (ReadDifference & { atVideoSec: number; respelled?: true })[];
 }
 
 /**
@@ -80,6 +81,11 @@ export async function checkReads(
 		scenes.map((scene) => video.resolved.narration[scene.id]?.assetId).filter((id): id is string => Boolean(id)),
 	);
 	const language = project.brand.narration?.language;
+	const respellings = new Set((project.brand.narration?.pronunciations ?? []).flatMap((rule) => tokens(rule.say).map((token) => token.key)));
+	const isRespelling = (text: string) => {
+		const keys = tokens(text).map((token) => token.key);
+		return keys.length > 0 && keys.every((key) => respellings.has(key));
+	};
 	const unheard: string[] = [];
 	const reads = await inBatches(scenes, 4, async (scene): Promise<SceneRead | null> => {
 		const take = takes.get(video.resolved.narration[scene.id]?.assetId ?? "");
@@ -96,20 +102,29 @@ export async function checkReads(
 		const result = compareRead(spoken, heard);
 		const clip = timeline.audio.find((candidate) => candidate.id === `narration-${scene.id}`);
 		const offset = clip ? clip.startFrame / timeline.fps - clip.trimStartSec : (timeline.scenes.find((s) => s.id === scene.id)?.startFrame ?? 0) / timeline.fps;
-		return { sceneId: scene.id, matched: round2(result.matched), differences: result.differences.map((difference) => ({ ...difference, atVideoSec: round2(offset + difference.atSec) })) };
+		return {
+			sceneId: scene.id,
+			matched: round2(result.matched),
+			differences: result.differences.map((difference) => ({
+				...difference,
+				atVideoSec: round2(offset + difference.atSec),
+				...(difference.kind === "different" && isRespelling(difference.expected) ? { respelled: true as const } : {}),
+			})),
+		};
 	});
 
 	const issues: Issue[] = [];
 	const found = reads.filter((read): read is SceneRead => Boolean(read));
 	for (const read of found) {
 		if (!read.differences.length) continue;
-		const serious = read.differences.some((difference) => difference.weight >= 2) || read.differences.length >= 2 || read.matched < 0.85;
+		const real = read.differences.filter((difference) => !difference.respelled);
+		const serious = real.some((difference) => difference.weight >= 2) || real.length >= 2 || (real.length > 0 && read.matched < 0.85);
 		const shown = read.differences.slice(0, 4).map((difference) =>
 			difference.kind === "missing"
 				? `"${difference.expected}" was not heard (${clock(difference.atVideoSec)})`
 				: difference.kind === "extra"
 					? `"${difference.heard}" was heard but is not in the script (${clock(difference.atVideoSec)})`
-					: `"${difference.expected}" sounded like "${difference.heard}" (${clock(difference.atVideoSec)})`,
+					: `"${difference.expected}" sounded like "${difference.heard}" (${clock(difference.atVideoSec)})${difference.respelled ? " — a pronunciation respelling, which transcribers rarely spell back the same way, so probably fine" : ""}`,
 		);
 		issues.push({
 			severity: serious ? "warning" : "info",
