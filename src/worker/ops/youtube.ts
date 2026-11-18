@@ -6,7 +6,10 @@ import { YOUTUBE_PRIVACY, type YoutubePublishRequest } from "../db/schema.ts";
 import { AppError, badRequest, newId } from "../lib/util.ts";
 import { revokeToken, videoStatus } from "../providers/youtube.ts";
 import { assetsById } from "../services/assets.ts";
+import { chapterBlock, chaptersFor } from "../../../shared/publish.ts";
+import { preflight } from "../services/publish.ts";
 import { getRender } from "../services/renders.ts";
+import { approvedNow } from "../services/reviews.ts";
 import { getVideo } from "../services/videos.ts";
 import {
 	type YoutubeUpload,
@@ -23,6 +26,9 @@ import { defineOp, waitSeconds } from "./registry.ts";
 
 const channel = z.string().optional().describe("Which connected channel: its id (ytc_…) or YouTube channel id (UC…). Optional when only one is connected");
 const noAngleBrackets = (text: string) => !/[<>]/.test(text);
+
+/** Chapters go after the description and before the credits, unless the description already lists its own. */
+const withChapters = (description: string, block: string) => (!block || /^0?0:00\s/m.test(description) ? description : [description.trim(), block].filter(Boolean).join("\n\n"));
 
 async function waitForUpload(upload: YoutubeUpload, seconds: number): Promise<YoutubeUpload> {
 	const deadline = Date.now() + seconds * 1000;
@@ -74,12 +80,34 @@ export const youtubeOps = [
 	}),
 
 	defineOp({
+		name: "youtube.preflight",
+		title: "Check before publishing",
+		description:
+			"Free. Everything worth knowing before youtube.publish, worst first: whether it will be a Short, whether the export is of the current cut, " +
+			"whether the person approved it (review.request), the thumbnail, chapters, captions, credits, a duplicate upload and the daily upload limit. " +
+			"Also suggests the containsSyntheticMedia answer from what the video is made of (generated clips, generated stills), with reasons.",
+		input: z.object({ renderId: z.string().describe("A render (rnd_…) to publish"), channel }),
+		readOnly: true,
+		handler: async (input, { actor }) => {
+			const { render } = await getRender(actor, input.renderId);
+			const { video } = await getVideo(actor, render.videoId);
+			const target = input.channel || (await listChannels(actor.id)).length === 1 ? await resolveChannel(actor, input.channel).catch(() => undefined) : undefined;
+			const result = await preflight(render, video, { channelId: target?.channelId });
+			return {
+				...result,
+				...(target ? { channel: channelView(target) } : (await listChannels(actor.id)).length ? {} : { note: "No YouTube channel is connected yet: youtube.connect gives the person a link." }),
+			};
+		},
+	}),
+
+	defineOp({
 		name: "youtube.publish",
 		title: "Publish to YouTube",
 		description:
 			"Uploads a finished render to a connected YouTube channel. Credit lines required by third-party media are appended to the description automatically, " +
 			"and captions timed to the narration are added (captions: false to skip). Uploads default to private so the person can review in YouTube Studio first; " +
-			"only use unlisted or public, or a publishAt time, when the person asked for it. Use a 9:16 render of three minutes or less for a YouTube Short. " +
+			"only use unlisted or public, or a publishAt time, when the person asked for it, and those need the person's approval of the cut (review.request) or personApproved. " +
+				"The video's thumbnail and its chapters go up with it. Run youtube.preflight first. Use a 9:16 render of three minutes or less for a YouTube Short. " +
 			"Follow progress with youtube.get.",
 		input: z.object({
 			renderId: z.string().describe("A finished render (rnd_…) from video.render / render.list"),
@@ -113,6 +141,11 @@ export const youtubeOps = [
 				.describe("An image asset to use as the thumbnail (1280×720 recommended). Defaults to the video's thumbnail (thumbnail.design); null for none. Custom thumbnails need a verified YouTube channel"),
 			playlistId: z.string().optional().describe("Add the video to this playlist on the channel"),
 			allowDuplicate: z.boolean().default(false).describe("Publish even though this render was already sent to this channel"),
+			chapters: z.boolean().default(true).describe("List the chapters (scenes with a chapter title) with their times in the description"),
+			personApproved: z
+				.boolean()
+				.default(false)
+				.describe("Unlisted, public or scheduled uploads need the person's approval of this cut: a review they approved, or set this when they approved it in some other way"),
 			waitSeconds,
 		}),
 		handler: async (input, { actor }) => {
@@ -142,6 +175,13 @@ export const youtubeOps = [
 				privacy = "private";
 			}
 			const { video } = await getVideo(actor, render.videoId);
+			if ((privacy !== "private" || input.publishAt) && !input.personApproved && !(await approvedNow(video)).approved) {
+				throw new AppError(
+					409,
+					"Nobody has approved this cut for anyone to see. Ask the person with review.request (or upload it private). If they approved it another way, pass personApproved: true.",
+					"not_approved",
+				);
+			}
 			// The video's own thumbnail goes up with it unless another (or none) was asked for.
 			const thumbnailAssetId = input.thumbnailAssetId === null ? undefined : (input.thumbnailAssetId ?? video.thumbnailAssetId ?? undefined);
 			if (thumbnailAssetId) {
@@ -152,7 +192,7 @@ export const youtubeOps = [
 
 			const request: YoutubePublishRequest = {
 				title: input.title ?? video.title.slice(0, 100),
-				description: input.description,
+				description: withChapters(input.description, input.chapters ? chapterBlock(chaptersFor(render.timeline, video.storyboard).chapters) : ""),
 				tags: input.tags,
 				categoryId: input.categoryId,
 				privacy,

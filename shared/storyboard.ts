@@ -259,6 +259,9 @@ export const Scene = z.object({
 				"map: an animated map with pinned places (set map). outro: logo and call to action.",
 		),
 	label: short.optional().describe("Working title for the scene, never shown"),
+	chapter: short
+		.optional()
+		.describe("Start a chapter here with this title. Chapters are listed with their times in the YouTube description so viewers can jump to them (at least three, ten seconds or more apart)"),
 	narration: z.string().max(3000).optional().describe("What the voice says. The scene lasts as long as this takes to say"),
 	footage: SceneFootage.optional().describe(
 		"Use a stretch of the person's own recording instead of generated narration: the scene lasts as long as the stretch, and captions, cues and music ducking follow what they say",
