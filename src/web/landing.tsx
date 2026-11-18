@@ -35,15 +35,17 @@ const RATE = {
 /** A 1080p render takes about 1.2 times the video's length, plus a few seconds to start. */
 const RENDER_SEC = Math.round(TOTAL_SEC * 1.2) + 4;
 
+/** Each line is rounded to a tenth of a cent before it is added, so the receipt sums the way it reads. */
+const line = (item: string, detail: string, usd: number) => ({ item, detail, usd: Math.round(usd * 1000) / 1000 });
 const RECEIPT = [
-	{ item: "Narration", detail: `${CHARACTERS} characters`, usd: (CHARACTERS / 1000) * RATE.voicePer1k },
-	{ item: "Stills", detail: "2 generated", usd: 2 * RATE.still },
-	{ item: "Stock clip", detail: "1, free to use", usd: 0 },
-	{ item: "Cut-out", detail: "1 subject", usd: RATE.cutout },
-	{ item: "Music", detail: `${TOTAL_SEC} seconds`, usd: (TOTAL_SEC / 60) * RATE.musicPerMinute },
-	{ item: "Render", detail: `${RENDER_SEC} s of machine time`, usd: RENDER_SEC * RATE.renderPerSecond },
+	line("Narration", `${CHARACTERS} characters`, (CHARACTERS / 1000) * RATE.voicePer1k),
+	line("Stills", "2 generated", 2 * RATE.still),
+	line("Stock clip", "1, free to use", 0),
+	line("Cut-out", "1 subject", RATE.cutout),
+	line("Music", `${TOTAL_SEC} seconds`, (TOTAL_SEC / 60) * RATE.musicPerMinute),
+	line("Render", `${RENDER_SEC} s of machine time`, RENDER_SEC * RATE.renderPerSecond),
 ];
-const COST = RECEIPT.reduce((sum, line) => sum + line.usd, 0);
+const COST = RECEIPT.reduce((sum, entry) => sum + entry.usd, 0);
 const mills = (usd: number) => `$${usd.toFixed(3)}`;
 /** 0.3¢, 4.5¢, 15¢: a decimal only while it says something. */
 const cents = (usd: number) => `${Number((usd * 100).toFixed(usd < 0.1 ? 1 : 0))}¢`;
@@ -185,7 +187,7 @@ function Thumb({ index }: { index: number }) {
 			</p>
 		</>,
 		<>
-			<img src={img("scene-pour")} alt="" />
+			<img src={img("scene-pour")} alt="" loading="lazy" />
 			<p className="ad-lower">{scene.shown}</p>
 		</>,
 		<p className="ad-stat">
@@ -193,7 +195,7 @@ function Thumb({ index }: { index: number }) {
 			hours, roaster to door
 		</p>,
 		<>
-			<img src={img("scene-cups")} alt="" />
+			<img src={img("scene-cups")} alt="" loading="lazy" />
 			<ul className="ad-bullets">
 				<li>Peach</li>
 				<li>Jasmine</li>
@@ -488,7 +490,7 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 								<tr>
 									<th scope="row">What you set up</th>
 									<td>A Google sign-in and a card.</td>
-									<td>A Cloudflare account for the Worker, database, storage and render containers, plus keys for OpenRouter and ElevenLabs.</td>
+									<td>A Cloudflare account for the Worker, database, storage and render containers, plus keys for OpenRouter and ElevenLabs and a Google sign-in client.</td>
 								</tr>
 								<tr>
 									<th scope="row">When it fits</th>
