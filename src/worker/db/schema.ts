@@ -104,6 +104,8 @@ export type GenerationSpec =
 			modelId: string;
 			settings: { stability?: number; similarity?: number; style?: number; speed?: number; speakerBoost?: boolean };
 			language?: string;
+			/** How the read should feel. Sent only to OpenRouter models that take direction (Gemini, OpenAI). */
+			instructions?: string;
 	  }
 	| { type: "image"; prompt: string; aspectRatio: string; quality: string; referenceAssetIds: string[]; transparent?: boolean; model?: string }
 	/** A flat vector illustration (SVG). `colors` are hex values the illustration should favour. */
@@ -111,7 +113,8 @@ export type GenerationSpec =
 	/** The main subject of an image asset, with its background removed. */
 	| { type: "cutout"; sourceAssetId: string }
 	| { type: "video"; prompt: string; seconds: number; aspectRatio: string; resolution: string; firstFrameAssetId?: string; withAudio: boolean; model?: string }
-	| { type: "music"; prompt: string; seconds: number; instrumental: boolean }
+	/** `model` is "elevenlabs" (or absent) or an OpenRouter music model such as google/lyria-3-pro-preview. */
+	| { type: "music"; prompt: string; seconds: number; instrumental: boolean; model?: string }
 	| { type: "sfx"; prompt: string; seconds?: number }
 	| { type: "url"; url: string; headers?: Record<string, string> };
 
@@ -158,6 +161,13 @@ export interface PipelineState {
 	/** Asset generation progress while preparing. */
 	total?: number;
 	completed?: number;
+	/** The pipeline workflow instance doing the work, so a new run or video.cancel can stop it. */
+	instanceId?: string;
+	/** What that run was started from (storyboard, brand and regenerate options). */
+	inputHash?: string;
+	/** The music bed is still being composed; the timeline is recomposed with it when it lands. */
+	musicPending?: boolean;
+	cancelled?: boolean;
 }
 
 /** Assets generated for a storyboard, keyed so unchanged scenes are not regenerated. */

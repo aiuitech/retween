@@ -20,7 +20,7 @@ interface RendererStatus {
 	stage?: string;
 	progress?: number;
 	error?: string;
-	output?: { bytes: number; durationInFrames: number; fps: number };
+	output?: { bytes: number; durationInFrames: number; fps: number; loudness?: { inputLufs: number | null; outputLufs: number | null; outputTruePeak: number | null; mode: string } };
 	warnings?: string[];
 }
 
@@ -31,9 +31,15 @@ const loadRender = (renderId: string) => db.query.renders.findFirst({ where: eq(
 const update = (renderId: string, values: Partial<typeof schema.renders.$inferInsert>) =>
 	db.update(schema.renders).set(values).where(eq(schema.renders.id, renderId));
 
-export class RenderWorkflow extends WorkflowEntrypoint<Env, { renderId: string }> {
-	async run(event: WorkflowEvent<{ renderId: string }>, step: WorkflowStep) {
-		const { renderId } = event.payload;
+export interface RenderParams {
+	renderId: string;
+	/** Loudness to level the soundtrack to; null leaves it alone. Absent on runs started before levelling existed. */
+	master?: { lufs: number; truePeak: number } | null;
+}
+
+export class RenderWorkflow extends WorkflowEntrypoint<Env, RenderParams> {
+	async run(event: WorkflowEvent<RenderParams>, step: WorkflowStep) {
+		const { renderId, master } = event.payload;
 		try {
 			const started = await step.do("start", network, async () => {
 				const render = await loadRender(renderId);
@@ -42,7 +48,7 @@ export class RenderWorkflow extends WorkflowEntrypoint<Env, { renderId: string }
 				const response = await rendererFetch(renderId, "/render", {
 					method: "POST",
 					headers: { "content-type": "application/json" },
-					body: JSON.stringify({ jobId: renderId, props: await renderProps(render) }),
+					body: JSON.stringify({ jobId: renderId, props: await renderProps(render), ...(master ? { options: { master } } : {}) }),
 				});
 				if (response.status === 409) {
 					// Busy. Fine if a previous attempt of this step already started this very job; otherwise retry.

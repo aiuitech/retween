@@ -102,11 +102,90 @@ export async function upstreamError(provider: string, response: Response): Promi
 	} catch {
 		// not JSON: keep the raw text
 	}
-	const status = response.status === 429 || response.status >= 500 ? 502 : 422;
-	return new AppError(status, `${provider} error (${response.status}): ${message || response.statusText}`, "upstream_error", {
+	// Gateway pages (Cloudflare's 524 and friends) are HTML: say what happened instead of quoting markup.
+	if (/^\s*</.test(message)) message = GATEWAY_STATUS[response.status] ?? response.statusText ?? "";
+	const status = response.status === 429 || response.status === 408 || response.status >= 500 ? 502 : 422;
+	return new AppError(status, `${provider} error (${response.status}): ${message || GATEWAY_STATUS[response.status] || response.statusText}`, "upstream_error", {
 		provider,
 		upstreamStatus: response.status,
+		retryAfterMs: retryAfterMs(response),
 	});
+}
+
+const GATEWAY_STATUS: Record<number, string> = {
+	502: "the provider's gateway failed",
+	503: "the provider is unavailable",
+	504: "the provider's gateway timed out",
+	520: "the provider returned an unknown error",
+	522: "the provider could not be reached",
+	524: "the provider took too long to answer",
+};
+
+/** `retry-after` in milliseconds (seconds or an HTTP date), when the response gives one. */
+export function retryAfterMs(response: Response): number | undefined {
+	const header = response.headers.get("retry-after");
+	if (!header) return undefined;
+	const seconds = Number(header);
+	if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+	const date = Date.parse(header);
+	return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
+}
+
+/** True for an upstream rate limit or concurrency limit (HTTP 429). */
+export function isRateLimited(error: unknown): boolean {
+	return error instanceof AppError && (error.details as { upstreamStatus?: number } | undefined)?.upstreamStatus === 429;
+}
+
+/**
+ * Errors from our own infrastructure that usually go away on a second try:
+ * a D1 hiccup, a dropped connection, a Workflows engine blip.
+ */
+const TRANSIENT = /Network connection lost|ECONNRESET|ECONNREFUSED|socket hang up|fetch failed|overloaded|internal error|transient|object to be reset|reset because its code was updated|timed? ?out|WorkflowInternalError/i;
+/** Mistakes in a query, which no retry fixes. */
+const PERMANENT = /no such (table|column)|syntax error|constraint failed|datatype mismatch|SQLITE_(ERROR|CONSTRAINT|MISMATCH)/i;
+
+export function isTransient(error: unknown): boolean {
+	if (error instanceof AppError) return error.status === 502 && /error \((5\d\d|408)\)/.test(error.message);
+	// Drizzle wraps D1's error ("Failed query: …") with the real reason as its cause.
+	const text = (e: unknown): string => (e instanceof Error ? `${e.name}: ${e.message} ${e.cause ? text(e.cause) : ""}` : String(e));
+	const all = text(error);
+	return TRANSIENT.test(all) && !PERMANENT.test(all);
+}
+
+/**
+ * Runs `work`, trying again after a short, growing pause while `retryIf` says
+ * the failure is worth another go. The last error is rethrown.
+ */
+export async function withRetry<T>(
+	work: (attempt: number) => Promise<T>,
+	options: { attempts?: number; baseDelayMs?: number; maxDelayMs?: number; retryIf?: (error: unknown) => boolean; delayFor?: (error: unknown) => number | undefined } = {},
+): Promise<T> {
+	const { attempts = 3, baseDelayMs = 300, maxDelayMs = 30_000, retryIf = isTransient, delayFor } = options;
+	for (let attempt = 1; ; attempt++) {
+		try {
+			return await work(attempt);
+		} catch (error) {
+			if (attempt >= attempts || !retryIf(error)) throw error;
+			// Exponential with full jitter, so callers that failed together do not retry together.
+			const backoff = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+			const wait = Math.min(maxDelayMs, Math.max(delayFor?.(error) ?? 0, backoff * (0.5 + Math.random() * 0.5)));
+			await new Promise((resolve) => setTimeout(resolve, wait));
+		}
+	}
+}
+
+/**
+ * A failure as the person should read it. Our own errors (AppError) are already
+ * written for them; anything else (a raw SQL or network error) is replaced by a
+ * plain explanation, and the original is logged instead.
+ */
+export function failureMessage(error: unknown, context = "generation"): string {
+	if (error instanceof AppError) return error.message;
+	const raw = error instanceof Error ? error.message : String(error);
+	// NonRetryableError and step failures carry the original message only, so check its wording too.
+	if (!isTransient(error) && !/Failed query|D1_|SQLITE|select .* from|insert into|update .* set/i.test(raw)) return raw.slice(0, 1000);
+	console.error(`${context} failed`, error);
+	return "A temporary problem on Retween's side (storage or network) stopped this. It is safe to try again: run video.prepare, or repeat the request.";
 }
 
 /** True for upstream failures worth retrying (rate limits, 5xx, network). */

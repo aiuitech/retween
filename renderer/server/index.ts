@@ -133,9 +133,17 @@ async function handleRender(req: IncomingMessage, res: ServerResponse) {
 		if (frameRange[1] < frameRange[0]) throw new HttpError(400, "options.frameRange must not end before it starts");
 	}
 
+	let master: { lufs: number; truePeak: number } | undefined;
+	if (options.master !== undefined && options.master !== null) {
+		const target = options.master as Record<string, unknown>;
+		if (typeof target !== "object" || typeof target.lufs !== "number" || typeof target.truePeak !== "number") throw new HttpError(400, "options.master must be { lufs, truePeak }");
+		if (target.lufs < -40 || target.lufs > -5 || target.truePeak < -9 || target.truePeak > 0) throw new HttpError(400, "options.master is out of range");
+		master = { lufs: target.lufs, truePeak: target.truePeak };
+	}
+
 	// Checked last and synchronously before starting, so two racing requests cannot both get in.
 	if (getStatus().state === "rendering") throw new HttpError(409, `a render is already running (jobId ${getStatus().jobId})`);
-	startRender(body.jobId, props, { crf, concurrency, draft: options.draft === true, frameRange });
+	startRender(body.jobId, props, { crf, concurrency, draft: options.draft === true, frameRange, master });
 	json(res, 202, { jobId: body.jobId });
 }
 

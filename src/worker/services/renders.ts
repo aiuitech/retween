@@ -13,6 +13,7 @@ import {
 	dropMissingAssetRefs,
 	resolveAssetRefs,
 } from "../../../shared/timeline.ts";
+import { masterLoudness } from "../../../shared/audio-models.ts";
 import type { Actor } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
 import { AppError, newId, notFound, slugify } from "../lib/util.ts";
@@ -78,7 +79,7 @@ export async function createRender(
 	actor: Actor,
 	video: Video,
 	project: Project,
-	options: { aspect: AspectRatio; resolution: Resolution },
+	options: { aspect: AspectRatio; resolution: Resolution; loudness?: number | "off" },
 	timeline?: Timeline,
 ): Promise<Render> {
 	const source = timeline ?? (await freshTimeline(video, project));
@@ -98,7 +99,9 @@ export async function createRender(
 			createdBy: actor.id,
 		})
 		.returning();
-	await env.RENDER_WORKFLOW.create({ id: render!.id, params: { renderId: render!.id } });
+	// The soundtrack is levelled to the brand's loudness unless this export asks for another (or none).
+	const master = masterLoudness(options.loudness ?? project.brand.audio?.loudness);
+	await env.RENDER_WORKFLOW.create({ id: render!.id, params: { renderId: render!.id, master } });
 	return render!;
 }
 

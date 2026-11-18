@@ -4,7 +4,7 @@ import start from "@tanstack/react-start/server-entry";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type Actor, actorById, actorFromRequest, assertActive, auth } from "./auth/index.ts";
-import { AppError, badRequest } from "./lib/util.ts";
+import { AppError, badRequest, isTransient } from "./lib/util.ts";
 import { opsFor, ops, runOp } from "./ops/index.ts";
 import { INLINE_IMAGE, manifestEntry } from "./ops/registry.ts";
 import { YOUTUBE_SCOPE, authorizationUrl, exchangeCode, myChannel } from "./providers/youtube.ts";
@@ -34,6 +34,9 @@ app.onError((error, c) => {
 		return c.json({ ok: false, error: { code: error.code, message: error.message, details: error.details } }, error.status as 400);
 	}
 	console.error("unhandled error", c.req.method, c.req.path, error);
+	if (isTransient(error)) {
+		return c.json({ ok: false, error: { code: "transient", message: "A temporary problem on Retween's side (storage or network). It is safe to try again." } }, 503);
+	}
 	return c.json({ ok: false, error: { code: "internal", message: "Something went wrong" } }, 500);
 });
 

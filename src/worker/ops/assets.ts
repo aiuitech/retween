@@ -1,12 +1,13 @@
 import { env } from "cloudflare:workers";
 import { and, desc, eq, like, sql } from "drizzle-orm";
 import { z } from "zod";
+import { ELEVENLABS_VOICE_MODELS, MUSIC_MODELS, MUSIC_MODEL_IDS, OPENROUTER_VOICE_MODELS, isOpenRouterModel } from "../../../shared/audio-models.ts";
 import { ASPECT_RATIOS } from "../../../shared/timeline.ts";
 import { db, schema } from "../db/client.ts";
 import { ASSET_KINDS, type GenerationSpec } from "../db/schema.ts";
-import { badRequest, bytesToBase64 } from "../lib/util.ts";
+import { badRequest, bytesToBase64, notFound } from "../lib/util.ts";
 import { listVoices } from "../providers/elevenlabs.ts";
-import { IMAGE_ASPECTS, VIDEO_RESOLUTIONS } from "../providers/openrouter.ts";
+import { IMAGE_ASPECTS, VIDEO_RESOLUTIONS, speechModels } from "../providers/openrouter.ts";
 import { searchIcons, searchPlaces } from "../providers/iconify.ts";
 import { STOCK_PROVIDERS, availableProviders, getStockItem, searchStock } from "../providers/stock.ts";
 import { type Asset, assetView, assetsById, createAsset, deleteAsset, getAsset, notSceneMedia, startGeneration, waitForAssets } from "../services/assets.ts";
@@ -351,6 +352,11 @@ export const assetOps = [
 			projectId,
 			text: z.string().min(1).max(3000),
 			voiceId: z.string().optional().describe("Defaults to the brand kit's voice"),
+			model: z
+				.string()
+				.max(120)
+				.optional()
+				.describe("Audition another voice model: an ElevenLabs model id, or an OpenRouter speech model such as hexgrad/kokoro-82m (voice.list with models: true). Defaults to the brand kit's"),
 			speed: z.number().min(0.7).max(1.2).optional(),
 			name,
 			tags,
@@ -358,7 +364,8 @@ export const assetOps = [
 		}),
 		paid: true,
 		handler: async (input, { actor }) => {
-			const project = await getProject(actor, input.projectId);
+			const base = await getProject(actor, input.projectId);
+			const project = input.model ? { ...base, brand: { ...base.brand, narration: { ...base.brand.narration, modelId: input.model } } } : base;
 			await assertBudget(actor);
 			const asset = await createAsset({
 				projectId: project.id,
@@ -379,12 +386,16 @@ export const assetOps = [
 		title: "Generate music",
 		description:
 			"Compose an instrumental music bed (10 s to 5 min). To make it the project default, set audio.musicAssetId in the brand kit; " +
-			"a bed shorter than a video loops.",
+			"a bed shorter than a video loops. Lyria (via OpenRouter) is quicker and cheaper than ElevenLabs; pick it with `model`.",
 		input: z.object({
 			projectId,
 			prompt: z.string().max(2000).optional().describe("Genre, tempo, instruments, mood. Defaults to the brand kit's music prompt"),
-			seconds: z.number().min(10).max(300).default(60),
+			seconds: z.number().min(10).max(300).default(60).describe("ElevenLabs and Lyria Pro aim for this length; Lyria Clip always makes 30 s"),
 			instrumental: z.boolean().default(true),
+			model: z
+				.enum(MUSIC_MODEL_IDS)
+				.optional()
+				.describe(`Who composes it. Defaults to the brand's audio.musicModel, else elevenlabs. ${MUSIC_MODELS.map((model) => `${model.id}: ${model.label}`).join(". ")}`),
 			name,
 			tags,
 			waitSeconds,
@@ -403,7 +414,13 @@ export const assetOps = [
 				source: "generated",
 				tags: input.tags ?? ["music"],
 				meta: { prompt },
-				generation: await enforceControls(actor.id, { type: "music", prompt, seconds: input.seconds, instrumental: input.instrumental }),
+				generation: await enforceControls(actor.id, {
+					type: "music",
+					prompt,
+					seconds: input.seconds,
+					instrumental: input.instrumental,
+					...((input.model ?? project.brand.audio?.musicModel ?? "elevenlabs") !== "elevenlabs" ? { model: input.model ?? project.brand.audio?.musicModel } : {}),
+				}),
 			});
 			return generateAndWait(asset, input.waitSeconds);
 		},
@@ -566,10 +583,50 @@ export const assetOps = [
 	defineOp({
 		name: "voice.list",
 		title: "List voices",
-		description: "Narration voices that can be set as narration.voiceId in the brand kit or on a single scene.",
-		input: z.object({ search: z.string().max(100).optional().describe("Name, accent, gender or style") }),
+		description:
+			"Narration voices and voice models. With no model: ElevenLabs voices (set as narration.voiceId in the brand kit or on a scene). " +
+			"`models: true` lists every voice model with its price per 1,000 characters: ElevenLabs, and the much cheaper OpenRouter speech models (Kokoro, Gemini TTS, Voxtral, …). " +
+			"`model` (an OpenRouter model id) lists that model's voices. To switch, set narration.modelId and narration.voiceId together with brand.update; audition first with asset.generate_speech.",
+		input: z.object({
+			search: z.string().max(100).optional().describe("Name, accent, gender or style"),
+			model: z.string().max(120).optional().describe("An OpenRouter speech model id, e.g. hexgrad/kokoro-82m, to list its voices"),
+			models: z.boolean().default(false).describe("List the voice models and their prices instead of voices"),
+		}),
 		readOnly: true,
-		handler: async (input) => listVoices(input.search),
+		handler: async (input) => {
+			const needle = input.search?.toLowerCase();
+			const matches = (text: string) => !needle || text.toLowerCase().includes(needle);
+			if (input.models) {
+				const catalog = await speechModels().catch(() => []);
+				const suggested = new Set(OPENROUTER_VOICE_MODELS.map((model) => model.id));
+				const openrouter = [
+					...OPENROUTER_VOICE_MODELS.map((model) => {
+						const live = catalog.find((entry) => entry.id === model.id);
+						return { ...model, vendor: "openrouter", voices: live?.voices.length, usdPer1kCharacters: live?.usdPerCharacter !== undefined ? live.usdPerCharacter * 1000 : model.usdPer1kCharacters };
+					}),
+					...catalog
+						.filter((model) => !suggested.has(model.id))
+						.map((model) => ({ id: model.id, label: model.name, vendor: "openrouter", voices: model.voices.length, usdPer1kCharacters: model.usdPerCharacter !== undefined ? model.usdPerCharacter * 1000 : undefined })),
+				];
+				return {
+					models: [...ELEVENLABS_VOICE_MODELS.map((model) => ({ ...model, vendor: "elevenlabs" })), ...openrouter].filter((model) => matches(`${model.id} ${model.label}`)),
+					note:
+						"Prices are what the vendor charges per 1,000 characters (missing: priced by audio length). OpenRouter voices are timed to the script by a quick transcription " +
+						"(about $0.00005 a line), so captions and cues work the same. They do not read ElevenLabs [direction] tags; narration.direction is sent to the models that take instructions.",
+				};
+			}
+			if (input.model && isOpenRouterModel(input.model)) {
+				const model = (await speechModels()).find((entry) => entry.id === input.model);
+				if (!model) throw notFound(`OpenRouter speech model "${input.model}" (voice.list with models: true lists them)`);
+				const fallback = OPENROUTER_VOICE_MODELS.find((entry) => entry.id === model.id)?.defaultVoice;
+				return {
+					model: model.id,
+					voices: model.voices.filter(matches).map((voice) => ({ voiceId: voice, name: voice, ...(voice === fallback ? { suggested: true } : {}) })),
+					note: `Use with narration.modelId "${model.id}" and narration.voiceId set to one of these.`,
+				};
+			}
+			return listVoices(input.search);
+		},
 	}),
 ];
 

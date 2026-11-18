@@ -3,6 +3,8 @@
  * be generated or rendered.
  */
 import { eq } from "drizzle-orm";
+import { isOpenRouterModel } from "../../../shared/audio-models.ts";
+import { DEFAULTS } from "../../../shared/brand.ts";
 import { CLIP_RESOLUTIONS, type CostControls, DEFAULT_CONTROLS, IMAGE_QUALITIES, capAt } from "../../../shared/controls.ts";
 import { RESOLUTIONS, type Resolution } from "../../../shared/timeline.ts";
 import { db, schema } from "../db/client.ts";
@@ -56,7 +58,14 @@ export function blockedReason(controls: CostControls, type: GenerationSpec["type
 export function limitSpec<T extends GenerationSpec>(controls: CostControls, spec: T): T {
 	switch (spec.type) {
 		case "speech":
-			return controls.narrationModel ? { ...spec, modelId: controls.narrationModel } : spec;
+			if (!controls.narrationModel || controls.narrationModel === spec.modelId) return spec;
+			// An OpenRouter voice name means nothing to ElevenLabs: fall back to the default ElevenLabs voice.
+			// (The other way round, the OpenRouter model's own default voice is picked when it is generated.)
+			return {
+				...spec,
+				modelId: controls.narrationModel,
+				...(isOpenRouterModel(spec.modelId) && !isOpenRouterModel(controls.narrationModel) ? { voiceId: DEFAULTS.voiceId } : {}),
+			};
 		case "image":
 			return { ...spec, quality: capAt(IMAGE_QUALITIES, spec.quality as (typeof IMAGE_QUALITIES)[number], controls.imageMaxQuality) };
 		case "vector":

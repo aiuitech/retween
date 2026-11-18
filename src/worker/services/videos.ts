@@ -3,6 +3,7 @@
  */
 import { env } from "cloudflare:workers";
 import { and, desc, eq, inArray } from "drizzle-orm";
+import { isOpenRouterModel } from "../../../shared/audio-models.ts";
 import { type BrandKit, DEFAULTS, resolvePalette } from "../../../shared/brand.ts";
 import { type ComposeAsset, type ComposeResult, composeTimeline } from "../../../shared/compose.ts";
 import { type Scene, type Storyboard, storyboardIcons } from "../../../shared/storyboard.ts";
@@ -15,7 +16,7 @@ import { falConfigured } from "../providers/fal.ts";
 import { blockedReason, getControls, limitSpec } from "./controls.ts";
 import { iconLicense, iconSets, iconSvgUrl, missingIcons } from "../providers/iconify.ts";
 import { type Orientation, searchStock } from "../providers/stock.ts";
-import { type Asset, assetsById, createAsset, deleteAsset } from "./assets.ts";
+import { type Asset, assetsById, cancelGeneration, createAsset, deleteAsset } from "./assets.ts";
 import { footageOf } from "./footage.ts";
 import { type Project, getProject } from "./projects.ts";
 import { videoSpend } from "./usage.ts";
@@ -169,13 +170,17 @@ export function imageReferenceIds(brand: BrandKit, castIds: string[] = [], extra
 
 export function narrationSpec(brand: BrandKit, text: string, override: Scene["voice"] = {}): Extract<GenerationSpec, { type: "speech" }> {
 	const voice = brand.narration ?? {};
+	const modelId = voice.modelId ?? DEFAULTS.voiceModel;
+	// Direction is sent as instructions only to OpenRouter voices, so it never changes an ElevenLabs take's key.
+	const instructions = isOpenRouterModel(modelId) && voice.direction ? voice.direction : undefined;
 	return {
 		type: "speech",
 		text,
 		pronunciations: voice.pronunciations ?? [],
 		voiceId: override?.voiceId ?? voice.voiceId ?? DEFAULTS.voiceId,
-		modelId: voice.modelId ?? DEFAULTS.voiceModel,
+		modelId,
 		language: voice.language,
+		...(instructions ? { instructions } : {}),
 		settings: {
 			stability: voice.stability,
 			similarity: voice.similarity,
@@ -617,9 +622,11 @@ export async function planMedia(
 				draft: true,
 			});
 			const seconds = clamp(Math.ceil(draft.durationSec + 2), 10, 300);
-			const spec: GenerationSpec = { type: "music", prompt, seconds, instrumental: true };
-			// Re-score only when the length changes by a meaningful amount.
-			const hash = await hashOf({ prompt, bucket: Math.ceil(seconds / 20) });
+			const model = music?.model ?? brand.audio?.musicModel;
+			const other = model && model !== "elevenlabs" ? model : undefined;
+			const spec: GenerationSpec = { type: "music", prompt, seconds, instrumental: true, ...(other ? { model: other } : {}) };
+			// Re-score only when the length changes by a meaningful amount (a fixed-length clip never needs to).
+			const hash = await hashOf({ prompt, bucket: other?.includes("clip") ? 0 : Math.ceil(seconds / 20), ...(other ? { model: other } : {}) });
 			const blocked = blockedReason(controls, "music");
 			const entry = await ensure(
 				resolved.music,
@@ -703,7 +710,36 @@ export async function mediaStatus(video: Video, project: Project) {
 	};
 }
 
-export async function videoDetail(video: Video, project: Project) {
+/** The media status cut down to counts and whatever is not ready, for polling. */
+function mediaSummary(media: Awaited<ReturnType<typeof mediaStatus>>) {
+	type Entry = { assetId?: string; status: string; error?: string };
+	const counts: Record<string, number> = {};
+	const notReady: { sceneId?: string; what: string; assetId?: string; status: string; error?: string }[] = [];
+	const note = (what: string, entry: Entry | undefined, sceneId?: string) => {
+		if (!entry) return;
+		counts[entry.status] = (counts[entry.status] ?? 0) + 1;
+		if (entry.status !== "ready") notReady.push({ ...(sceneId ? { sceneId } : {}), what, assetId: entry.assetId, status: entry.status, ...(entry.error ? { error: entry.error } : {}) });
+	};
+	for (const scene of media.scenes) {
+		note("narration", scene.narration, scene.id);
+		note("visual", scene.visual, scene.id);
+		note("cutout", scene.cutout, scene.id);
+	}
+	for (const [name, entry] of Object.entries(media.icons)) note(`icon ${name}`, entry);
+	note("music", media.music);
+	return { counts, ...(notReady.length ? { notReady: notReady.slice(0, 40) } : {}), ...(media.music ? { music: media.music } : {}) };
+}
+
+export interface DetailOptions {
+	/** Include the whole storyboard (large). */
+	storyboard?: boolean;
+	/** "full": every scene's media; "summary": counts and whatever is not ready. */
+	media?: "summary" | "full";
+	/** Include each scene's start and length in the composed timeline. */
+	timing?: boolean;
+}
+
+export async function videoDetail(video: Video, project: Project, options: DetailOptions = { storyboard: true, media: "full", timing: true }) {
 	const [media, renders, currentHash, spend] = await Promise.all([
 		mediaStatus(video, project),
 		db.query.renders.findMany({ where: eq(schema.renders.videoId, video.id), orderBy: desc(schema.renders.createdAt), limit: 20 }),
@@ -713,22 +749,26 @@ export async function videoDetail(video: Video, project: Project) {
 	const timeline = video.timeline;
 	return {
 		...(await videoSummary(video)),
-		pipeline: video.pipeline,
+		pipeline: (({ instanceId: _instance, inputHash: _input, ...visible }) => visible)(video.pipeline),
 		/** What this video has cost so far, as billed. */
 		spend,
-		storyboard: video.storyboard,
-		media,
+		...(options.storyboard ? { storyboard: video.storyboard } : { music: video.storyboard.music ?? null }),
+		media: options.media === "full" ? media : mediaSummary(media),
 		timeline: timeline
 			? {
 					/** True when the storyboard, brand or media changed after this timeline was composed. */
 					stale: video.composedFrom !== currentHash,
 					fps: timeline.fps,
 					durationSec: timeline.durationInFrames / timeline.fps,
-					scenes: timeline.scenes.map((scene) => ({
-						id: scene.id,
-						startSec: Math.round((scene.startFrame / timeline.fps) * 100) / 100,
-						durationSec: Math.round((scene.durationInFrames / timeline.fps) * 100) / 100,
-					})),
+					...(options.timing
+						? {
+								scenes: timeline.scenes.map((scene) => ({
+									id: scene.id,
+									startSec: Math.round((scene.startFrame / timeline.fps) * 100) / 100,
+									durationSec: Math.round((scene.durationInFrames / timeline.fps) * 100) / 100,
+								})),
+							}
+						: {}),
 				}
 			: undefined,
 		renders: renders.map((render) => ({
@@ -783,18 +823,71 @@ export async function videoCredits(video: Video, project: Project) {
 	};
 }
 
-/** Starts the pipeline workflow for a video. */
+/** What a preparation run is started from: a new video.prepare with the same inputs follows the running one. */
+export function pipelineInputHash(video: Pick<Video, "storyboard">, brand: BrandKit, regenerate: RegenerateOptions = {}): Promise<string> {
+	return hashOf({ storyboard: video.storyboard, brand, regenerate });
+}
+
+/** Stops a preparation run, if one is going. Media generations it started carry on in their own workflows. */
+async function stopPipeline(instanceId: string | undefined): Promise<void> {
+	if (!instanceId) return;
+	try {
+		const instance = await env.PIPELINE_WORKFLOW.get(instanceId);
+		const { status } = await instance.status();
+		if (status === "queued" || status === "running" || status === "waiting" || status === "paused") await instance.terminate();
+	} catch (error) {
+		console.warn("could not stop pipeline", instanceId, error);
+	}
+}
+
+/**
+ * Starts the pipeline workflow for a video. A run already in progress is
+ * replaced: it is stopped, and the new run picks up whatever media the old one
+ * had in flight (unchanged media is never generated twice).
+ */
 export async function startPipeline(
 	video: Video,
 	userId: string,
-	options: { regenerate?: RegenerateOptions; renders?: { aspect: AspectRatio; resolution: string }[] },
+	options: { regenerate?: RegenerateOptions; renders?: { aspect: AspectRatio; resolution: string }[]; inputHash?: string },
 ): Promise<void> {
+	if (video.status === "preparing") await stopPipeline(video.pipeline.instanceId);
+	const instanceId = `${video.id}-${Date.now().toString(36)}`;
 	await db
 		.update(schema.videos)
-		.set({ status: "preparing", pipeline: { stage: "assets", message: "Planning media", startedAt: Date.now() } })
+		.set({ status: "preparing", pipeline: { stage: "assets", message: "Planning media", startedAt: Date.now(), instanceId, inputHash: options.inputHash } })
 		.where(eq(schema.videos.id, video.id));
 	await env.PIPELINE_WORKFLOW.create({
-		id: `${video.id}-${Date.now().toString(36)}`,
+		id: instanceId,
 		params: { videoId: video.id, userId, regenerate: options.regenerate ?? {}, renders: options.renders ?? [] },
 	});
+}
+
+/**
+ * Stops preparing a video: the run is stopped and the media it is still
+ * waiting for is abandoned (marked failed, so the next video.prepare makes it
+ * afresh). Work a vendor has already started may still be charged.
+ */
+export async function cancelPipeline(video: Video, project: Project): Promise<{ stopped: boolean; abandoned: string[] }> {
+	const running = video.status === "preparing";
+	await stopPipeline(video.pipeline.instanceId);
+	const resolved = video.resolved;
+	const ids = [
+		...Object.values(resolved.narration),
+		...Object.values(resolved.visual),
+		...Object.values(resolved.sfx),
+		...Object.values(resolved.cutout ?? {}),
+		...Object.values(resolved.icons ?? {}),
+		...(resolved.music ? [resolved.music] : []),
+	].map((entry) => entry.assetId);
+	const pending = [...(await assetsById(project.id, ids)).values()].filter((asset) => asset.status === "pending");
+	await Promise.all(pending.map((asset) => cancelGeneration(asset.id, "Cancelled with video.cancel")));
+	await db
+		.update(schema.videos)
+		.set({
+			status: video.timeline ? "ready" : "draft",
+			// Not cleared: a stopped run that still manages a last write sees the id is no longer its own.
+			pipeline: { ...video.pipeline, instanceId: "cancelled", musicPending: false, cancelled: true, message: "Cancelled", finishedAt: Date.now() },
+		})
+		.where(eq(schema.videos.id, video.id));
+	return { stopped: running, abandoned: pending.map((asset) => asset.id) };
 }

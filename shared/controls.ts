@@ -14,21 +14,14 @@
  * Asking for one directly (asset.generate_video etc.) is refused instead.
  */
 import { z } from "zod";
+import { VOICE_MODELS, isOpenRouterModel } from "./audio-models.ts";
 import { RESOLUTIONS } from "./timeline.ts";
 
 export const IMAGE_QUALITIES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type ImageQuality = (typeof IMAGE_QUALITIES)[number];
 export const CLIP_RESOLUTIONS = ["360p", "720p", "1080p"] as const;
 
-/** ElevenLabs narration models, cheapest first. Flash and Turbo cost half as much per character. */
-export const VOICE_MODELS = [
-	{ id: "eleven_flash_v2_5", label: "Flash v2.5 (half price, fastest)" },
-	{ id: "eleven_turbo_v2_5", label: "Turbo v2.5 (half price)" },
-	{ id: "eleven_multilingual_v2", label: "Multilingual v2 (default)" },
-	{ id: "eleven_v3", label: "Eleven v3 (most expressive)" },
-] as const;
-const voiceModelIds = VOICE_MODELS.map((model) => model.id) as [string, ...string[]];
-
+export { VOICE_MODELS } from "./audio-models.ts";
 export const CostControls = z.object({
 	clips: z.boolean().describe("Generate video clips (by far the most expensive media)"),
 	clipMaxResolution: z.enum(CLIP_RESOLUTIONS).describe("Highest resolution a generated clip may have; price rises steeply with it"),
@@ -41,9 +34,14 @@ export const CostControls = z.object({
 	music: z.boolean().describe("Compose music beds"),
 	soundEffects: z.boolean().describe("Generate sound effects"),
 	narrationModel: z
-		.enum(voiceModelIds)
+		.string()
+		.max(120)
+		.refine((id) => VOICE_MODELS.some((model) => model.id === id) || isOpenRouterModel(id), "an ElevenLabs model id or an OpenRouter speech model (vendor/model)")
 		.nullable()
-		.describe("Voice every narration with this ElevenLabs model, whatever the brand kit says. null follows the brand kit"),
+		.describe(
+			"Voice every narration with this model, whatever the brand kit says: an ElevenLabs model (eleven_flash_v2_5…) or a cheaper OpenRouter speech model such as hexgrad/kokoro-82m. " +
+				"When the brand's voice belongs to another vendor, the model's default voice is used. null follows the brand kit",
+		),
 	renderMaxResolution: z.enum(RESOLUTIONS).describe("Highest export resolution; larger exports take longer to render"),
 	monthlyLimitUsd: z
 		.number()

@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { type Issue, audioIssues, clock, cueSheet, fitIssues, pacingIssues, round2, sceneAt, sceneRange, settledFrame, sortIssues, spreadFrames } from "../../../shared/inspect.ts";
+import { masterLoudness } from "../../../shared/audio-models.ts";
 import { Scene } from "../../../shared/storyboard.ts";
 import { ASPECT_RATIOS, type AspectRatio, type Timeline, dimensionsFor } from "../../../shared/timeline.ts";
 import { AppError, badRequest, bytesToBase64, newId, notFound } from "../lib/util.ts";
@@ -33,6 +34,29 @@ function condense(warnings: string[]): string[] {
 	return pending.length
 		? [`${pending.length} piece${pending.length === 1 ? "" : "s"} of media ha${pending.length === 1 ? "s" : "ve"} not been generated yet: timings are estimated and missing visuals show the brand backdrop. Run video.prepare for the real thing.`, ...rest]
 		: rest;
+}
+
+/**
+ * What a cue sheet's numbers rest on. While narration is still being voiced some scenes have real word
+ * timings and others are estimated: say which, rather than one blanket statement that contradicts the words shown.
+ */
+function timingNote(scenes: { id: string; estimated?: true; narration?: unknown }[], draft: boolean, preparing: boolean) {
+	if (!draft) return {};
+	const estimated = scenes.filter((scene) => scene.estimated).map((scene) => scene.id);
+	const voiced = scenes.filter((scene) => scene.narration).length;
+	const progress = preparing ? " video.prepare is still running; ask again when it finishes." : " Run video.prepare to voice them.";
+	if (!estimated.length) {
+		return { draft: true, note: `Narration timings are real; some other media is not generated yet, so missing visuals show the brand backdrop.${preparing ? " video.prepare is still running." : ""}` };
+	}
+	return {
+		draft: true,
+		estimatedScenes: estimated,
+		note:
+			(voiced
+				? `${voiced} scene${voiced === 1 ? " is" : "s are"} voiced and timed to the recording (word times are real). ` +
+					`${estimated.length} ${estimated.length === 1 ? "is" : "are"} not voiced yet (estimatedScenes): their times are estimated from the word count and everything after them may shift.`
+				: "No narration has been voiced yet: every time here is estimated from word counts, and there are no word timings.") + progress,
+	};
 }
 
 const settled = (timeline: Timeline, sceneId: string | undefined) => {
@@ -287,10 +311,7 @@ export const inspectOps = [
 			const inspected = await inspectTimeline(video, project);
 			checkSceneIds(inspected.timeline, input.sceneIds);
 			const sheet = cueSheet(inspected.timeline, inspected.storyboard, { sceneIds: input.sceneIds, words: input.words });
-			return {
-				...sheet,
-				...(inspected.draft ? { draft: true, note: "Timings are estimated until video.prepare has voiced the narration; there are no word timings yet." } : {}),
-			};
+			return { ...sheet, ...timingNote(sheet.scenes, inspected.draft, video.status === "preparing") };
 		},
 	}),
 
@@ -318,7 +339,8 @@ export const inspectOps = [
 			const timeline = composed.timeline;
 			const [first, last] = frameRange(timeline, input);
 			const analysis = await analyseAudio(actor, project.id, timeline, { fromFrame: first, toFrame: last + 1, profile: input.profile });
-			const issues = sortIssues(audioIssues(analysis, timeline.durationInFrames / timeline.fps));
+			const master = masterLoudness(project.brand.audio?.loudness);
+			const issues = sortIssues(audioIssues(analysis, timeline.durationInFrames / timeline.fps, master));
 			const counts = summary(issues);
 			return {
 				ok: counts.errors === 0 && counts.warnings === 0,
@@ -326,6 +348,10 @@ export const inspectOps = [
 				issues,
 				...analysis,
 				targets: { loudnessLufs: -14, speechOverMusicLu: "12-20", maxPeakDbfs: -1 },
+				/** What renders do to the mix measured here. */
+				mastering: master
+					? `Exports are levelled to ${master.lufs} LUFS integrated, true peak ≤ ${master.truePeak} dBTP (two-pass loudnorm). These measurements are of the mix before levelling. Change it with brand.update audio.loudness, or per export with video.render loudness.`
+					: "Exports are not levelled (brand audio.loudness is \"off\"): they keep the mix as measured here.",
 			};
 		},
 	}),

@@ -8,7 +8,7 @@ import { billingOps } from "./billing.ts";
 import { footageOps } from "./footage.ts";
 import { inspectOps } from "./inspect.ts";
 import { projectOps } from "./projects.ts";
-import type { Op } from "./registry.ts";
+import { type Op, invokeOp } from "./registry.ts";
 import { videoOps } from "./videos.ts";
 import { youtubeOps } from "./youtube.ts";
 
@@ -31,5 +31,5 @@ export async function runOp(name: string, rawInput: unknown, actor: Actor): Prom
 		const issues = parsed.error.issues.map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`);
 		throw badRequest(`Invalid input for ${name}: ${issues.slice(0, 8).join("; ")}`, { issues: z.treeifyError(parsed.error) });
 	}
-	return op.handler(parsed.data, { actor });
+	return invokeOp(op, parsed.data, { actor });
 }

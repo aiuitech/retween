@@ -7,18 +7,30 @@
  */
 import { env } from "cloudflare:workers";
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { buildSpokenText, wordTimings } from "../../../shared/narration.ts";
+import { isOpenRouterModel } from "../../../shared/audio-models.ts";
+import { type SpokenText, alignmentFromWords, buildSpokenText, wordTimings } from "../../../shared/narration.ts";
 import type { Actor } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
 import type { AssetKind, AssetLicense, AssetMeta, AssetSource, GenerationSpec } from "../db/schema.ts";
 import { AppError, badRequest, bytesToBase64, newId, notFound } from "../lib/util.ts";
 import { composeMusic, generateSfx, synthesizeSpeech } from "../providers/elevenlabs.ts";
 import { type FalCharge, generateVector, removeBackground } from "../providers/fal.ts";
-import { IMAGE_MODEL, generateImage } from "../providers/openrouter.ts";
+import {
+	IMAGE_MODEL,
+	LYRIA_USD,
+	TIMING_MODEL,
+	composeMusicOpenRouter,
+	generateImage,
+	generationCost,
+	speechModels,
+	synthesizeSpeechOpenRouter,
+	transcribeWords,
+	voiceFor,
+} from "../providers/openrouter.ts";
 import { MAX_LOTTIE_BYTES, lottieInfo, probeObject } from "./probe.ts";
 import { type Project, getProject } from "./projects.ts";
 import { assetKey, contentTypeFor, extensionFor, kindFor, readObject, signedUrl } from "./storage.ts";
-import { ELEVENLABS } from "./pricing.ts";
+import { ELEVENLABS, OPENROUTER_VOICE_USD_PER_1K } from "./pricing.ts";
 import { recordUsage } from "./usage.ts";
 
 export type Asset = typeof schema.assets.$inferSelect;
@@ -278,6 +290,7 @@ export async function executeGeneration(assetId: string): Promise<Asset> {
 	switch (spec.type) {
 		case "speech": {
 			const spoken = buildSpokenText(spec.text, spec.pronunciations);
+			if (isOpenRouterModel(spec.modelId)) return speakWithOpenRouter(asset, spec, spoken, usage);
 			const result = await synthesizeSpeech({
 				text: spoken.spoken,
 				voiceId: spec.voiceId,
@@ -336,6 +349,22 @@ export async function executeGeneration(assetId: string): Promise<Asset> {
 			return storeAsset(asset, image.bytes, image.contentType, { meta: { model: image.model, provider: "openrouter" } });
 		}
 		case "music": {
+			if (spec.model && spec.model !== "elevenlabs") {
+				const music = await composeMusicOpenRouter({ ...spec, model: spec.model });
+				await recordUsage({
+					...usage,
+					kind: "music",
+					provider: "openrouter",
+					model: spec.model,
+					quantity: 1,
+					unit: "pieces",
+					costUsd: music.costUsd ?? LYRIA_USD[spec.model] ?? 0.08,
+					basis: music.costUsd === undefined ? "list" : "vendor",
+					vendorRef: music.generationId,
+					dedupeKey: music.generationId && `openrouter:${music.generationId}`,
+				});
+				return storeAsset(asset, music.audio, "audio/mpeg", { meta: { provider: "openrouter", model: spec.model } });
+			}
 			const music = await composeMusic(spec);
 			// The length asked for is the length billed (the API clamps it to 10 s–5 min).
 			const seconds = Math.min(300, Math.max(10, spec.seconds));
@@ -403,6 +432,65 @@ export async function executeGeneration(assetId: string): Promise<Asset> {
 	}
 }
 
+/**
+ * Narration from an OpenRouter voice. These report no timestamps, so the take
+ * is transcribed (a fraction of a cent) and the heard words are lined up with
+ * the script to give the same word timings ElevenLabs' alignment gives.
+ */
+async function speakWithOpenRouter(
+	asset: Asset,
+	spec: Extract<GenerationSpec, { type: "speech" }>,
+	spoken: SpokenText,
+	usage: { userId: string; projectId: string; videoId?: string; ref: string },
+): Promise<Asset> {
+	// Bracketed direction tags ([whispers]) are an ElevenLabs feature; other voices would read them out.
+	// Blanking them keeps every character where it was, so the alignment still maps onto the script.
+	const text = spoken.spoken.replace(/\[[^\]]*\]/g, (tag) => " ".repeat(tag.length));
+	const { voice, substituted } = await voiceFor(spec.modelId, spec.voiceId);
+	const take = await synthesizeSpeechOpenRouter({ text, model: spec.modelId, voice, speed: spec.settings.speed, instructions: spec.instructions });
+	const characters = text.trim().length;
+	const listPrice =
+		(await speechModels().catch(() => [])).find((model) => model.id === spec.modelId)?.usdPerCharacter ?? (OPENROUTER_VOICE_USD_PER_1K[spec.modelId] ?? 0.03) / 1000;
+	const billed = take.generationId ? await generationCost(take.generationId) : undefined;
+	await recordUsage({
+		...usage,
+		kind: "speech",
+		provider: "openrouter",
+		model: spec.modelId,
+		quantity: characters,
+		unit: "characters",
+		costUsd: billed ?? characters * listPrice,
+		basis: billed === undefined ? "list" : "vendor",
+		vendorRef: take.generationId,
+		dedupeKey: take.generationId && `openrouter:${take.generationId}`,
+	});
+	const heard = await transcribeWords({ audio: take.audio, contentType: take.contentType, language: spec.language });
+	await recordUsage({
+		...usage,
+		kind: "speech",
+		provider: "openrouter",
+		model: TIMING_MODEL,
+		quantity: Math.ceil(heard.seconds ?? 0),
+		unit: "seconds",
+		costUsd: heard.costUsd ?? ((heard.seconds ?? 0) / 3600) * 0.012,
+		basis: heard.costUsd === undefined ? "list" : "vendor",
+		vendorRef: heard.generationId,
+		dedupeKey: heard.generationId && `openrouter:${heard.generationId}`,
+	});
+	const words = wordTimings(spec.text, spoken, alignmentFromWords(text, heard.words, heard.durationSec));
+	return storeAsset(asset, take.audio, take.contentType, {
+		meta: {
+			words,
+			spokenText: spoken.spoken,
+			voiceId: voice,
+			model: spec.modelId,
+			provider: "openrouter",
+			...(substituted ? { note: `The model has no voice "${spec.voiceId}", so its voice "${voice}" was used. Pick one with voice.list.` } : {}),
+		},
+		durationMs: heard.durationSec ? Math.round(heard.durationSec * 1000) : undefined,
+	});
+}
+
 /** Fetches a generated file from a provider's CDN. */
 async function download(url: string, what: string): Promise<{ bytes: Uint8Array; contentType: string }> {
 	const response = await fetch(url, { headers: { "user-agent": env.OUTBOUND_USER_AGENT } });
@@ -417,7 +505,27 @@ export async function startGeneration(asset: Pick<Asset, "id">): Promise<void> {
 		await env.ASSET_WORKFLOW.create({ id: asset.id, params: { assetId: asset.id } });
 	} catch (error) {
 		if (!/already exists|duplicate/i.test(error instanceof Error ? error.message : "")) throw error;
+		// Its workflow ran before. If that run is over but the asset is still pending (the run was stopped
+		// or crashed), run it again; the workflow skips assets that are no longer pending.
+		const instance = await env.ASSET_WORKFLOW.get(asset.id);
+		const { status } = await instance.status();
+		if (status === "errored" || status === "terminated" || status === "complete") await instance.restart();
 	}
+}
+
+/** Stops the workflow filling in a pending asset and marks the asset failed. */
+export async function cancelGeneration(assetId: string, reason: string): Promise<void> {
+	try {
+		const instance = await env.ASSET_WORKFLOW.get(assetId);
+		const { status } = await instance.status();
+		if (status === "queued" || status === "running" || status === "waiting" || status === "paused") await instance.terminate();
+	} catch {
+		// No workflow (never started): marking it is enough.
+	}
+	await db
+		.update(schema.assets)
+		.set({ status: "failed", error: reason })
+		.where(and(eq(schema.assets.id, assetId), eq(schema.assets.status, "pending")));
 }
 
 /** Polls until none of the assets is pending, or the time runs out. */

@@ -13,6 +13,7 @@
  */
 import { z } from "zod";
 import type { Actor } from "../auth/index.ts";
+import { isTransient, withRetry } from "../lib/util.ts";
 
 export interface OpContext {
 	actor: Actor;
@@ -40,6 +41,16 @@ export interface Op<Input extends z.ZodType = z.ZodType, Output = unknown> {
 
 export function defineOp<Input extends z.ZodType, Output>(op: Op<Input, Output>): Op {
 	return op as unknown as Op;
+}
+
+/**
+ * Runs an operation's handler with already-validated input. An operation that
+ * only reads is tried again when our own infrastructure hiccups (a dropped D1
+ * connection, a reset socket), so one blip does not reach the caller as an error.
+ */
+export function invokeOp(op: Op, input: unknown, ctx: OpContext): Promise<unknown> {
+	if (!op.readOnly) return op.handler(input, ctx);
+	return withRetry(() => op.handler(input, ctx), { attempts: 3, baseDelayMs: 250, retryIf: isTransient });
 }
 
 /** An image returned alongside an operation's JSON result (shown inline over MCP). */

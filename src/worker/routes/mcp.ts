@@ -8,9 +8,9 @@ import { env } from "cloudflare:workers";
 import { z } from "zod";
 import { type Actor, actorById, actorFromRequest, assertActive, auth } from "../auth/index.ts";
 import { API_KEY_PREFIX } from "../auth/options.ts";
-import { AppError } from "../lib/util.ts";
+import { AppError, isTransient } from "../lib/util.ts";
 import { opsFor } from "../ops/index.ts";
-import { INLINE_IMAGE, type InlineImage } from "../ops/registry.ts";
+import { INLINE_IMAGE, type InlineImage, invokeOp } from "../ops/registry.ts";
 import { WORKFLOW_GUIDE } from "../services/brief.ts";
 
 export const toolName = (opName: string) => opName.replace(/\./g, "_");
@@ -38,7 +38,7 @@ function buildServer(actor: Actor): McpServer {
 			},
 			async (input: unknown) => {
 				try {
-					const result = (await op.handler(input, { actor })) as Record<string, unknown>;
+					const result = (await invokeOp(op, input, { actor })) as Record<string, unknown>;
 					const { [INLINE_IMAGE]: image, ...data } = result ?? {};
 					const inline = image as InlineImage | undefined;
 					return {
@@ -48,7 +48,12 @@ function buildServer(actor: Actor): McpServer {
 						],
 					};
 				} catch (error) {
-					const message = error instanceof AppError ? error.message : "Something went wrong running this operation";
+					const message =
+						error instanceof AppError
+							? error.message
+							: isTransient(error)
+								? "A temporary problem on Retween's side (storage or network) stopped this operation. It is safe to try again."
+								: "Something went wrong running this operation";
 					if (!(error instanceof AppError)) console.error("op failed", op.name, error);
 					return { isError: true, content: [{ type: "text" as const, text: message }] };
 				}

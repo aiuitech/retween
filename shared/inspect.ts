@@ -97,6 +97,8 @@ export interface CueScene {
 	/** Every spoken word, when asked for. */
 	words?: { atSec: number; text: string }[];
 	events?: CueEvent[];
+	/** The narration has not been voiced yet: this scene's length and cues are estimated from its word count. */
+	estimated?: true;
 }
 
 export interface CueSheet {
@@ -155,6 +157,8 @@ export function cueSheet(timeline: Timeline, storyboard: Storyboard, options: { 
 				const lines = timeline.captions.filter((cue) => cue.startFrame >= start && cue.startFrame < end);
 				if (lines.length) out.lines = lines.map((cue) => ({ atSec: at(cue.startFrame), endSec: at(cue.endFrame), text: cue.text }));
 				if (options.words && words.length) out.words = words.map((word) => ({ atSec: at(word.startFrame), text: word.text }));
+			} else if (board?.narration?.trim() && !board.footage) {
+				out.estimated = true;
 			}
 
 			const events: CueEvent[] = [];
@@ -402,9 +406,17 @@ export interface AudioAnalysis {
 /** Online platforms play speech-led video at about -14 LUFS (YouTube turns louder videos down, and quieter ones are not turned up). */
 export const TARGET_LUFS = -14;
 
-export function audioIssues(analysis: AudioAnalysis, durationSec: number): Issue[] {
+/**
+ * `master` is the loudness exports are levelled to (brand audio.loudness), or null when they are not
+ * levelled. A quiet or loud mix, or peaks without headroom, are then fixed in the render, so they are
+ * reported as information rather than as warnings.
+ */
+export function audioIssues(analysis: AudioAnalysis, durationSec: number, master: { lufs: number; truePeak: number } | null = null): Issue[] {
 	const issues: Issue[] = [];
 	const { mix } = analysis;
+	const levelled = master
+		? ` Exports are levelled to ${master.lufs} LUFS with peaks under ${master.truePeak} dBTP (brand audio.loudness), so the rendered file will not have this problem.`
+		: "";
 	if (mix.clippedMs > 0) {
 		issues.push({
 			severity: "error",
@@ -414,17 +426,30 @@ export function audioIssues(analysis: AudioAnalysis, durationSec: number): Issue
 			fix: "Lower the music volume (storyboard.music.volume) or the sound effects' volume.",
 		});
 	} else if (mix.peakDbfs !== null && mix.peakDbfs > -1) {
-		issues.push({ severity: "warning", kind: "no-headroom", message: `Peaks reach ${mix.peakDbfs} dBFS; encoders can clip above -1 dBFS.`, fix: "Lower the music or sound effect volume a little." });
+		issues.push(
+			master
+				? { severity: "info", kind: "no-headroom", message: `Peaks in the mix reach ${mix.peakDbfs} dBFS.${levelled}` }
+				: { severity: "warning", kind: "no-headroom", message: `Peaks reach ${mix.peakDbfs} dBFS; encoders can clip above -1 dBFS.`, fix: "Lower the music or sound effect volume a little, or set the brand's audio.loudness so exports are levelled and limited." },
+		);
 	}
 	if (mix.lufs !== null) {
 		if (mix.lufs < -20) {
-			issues.push({
-				severity: "warning",
-				kind: "quiet",
-				message: `The mix measures ${mix.lufs} LUFS, well under the ${TARGET_LUFS} LUFS platforms play at. It will sound quiet next to other videos.`,
-			});
+			issues.push(
+				master
+					? { severity: "info", kind: "quiet", message: `The mix measures ${mix.lufs} LUFS.${levelled}` }
+					: {
+							severity: "warning",
+							kind: "quiet",
+							message: `The mix measures ${mix.lufs} LUFS, well under the ${TARGET_LUFS} LUFS platforms play at. It will sound quiet next to other videos.`,
+							fix: `Set the brand's audio.loudness (e.g. ${TARGET_LUFS}) so exports are levelled to it.`,
+						},
+			);
 		} else if (mix.lufs > -10) {
-			issues.push({ severity: "warning", kind: "loud", message: `The mix measures ${mix.lufs} LUFS; platforms will turn it down to about ${TARGET_LUFS} LUFS and it may sound squashed.` });
+			issues.push(
+				master
+					? { severity: "info", kind: "loud", message: `The mix measures ${mix.lufs} LUFS.${levelled}` }
+					: { severity: "warning", kind: "loud", message: `The mix measures ${mix.lufs} LUFS; platforms will turn it down to about ${TARGET_LUFS} LUFS and it may sound squashed.` },
+			);
 		}
 	}
 	const balance = analysis.speechOverMusic;

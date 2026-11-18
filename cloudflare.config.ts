@@ -40,6 +40,8 @@ export default defineConfig(({ mode }) => {
 				BILLING_MARKUP: bindings.text("1.4"),
 				/** Used to read container usage from Cloudflare's analytics when reconciling costs. */
 				CLOUDFLARE_ACCOUNT_ID: bindings.text(ACCOUNT_ID),
+				/** Most ElevenLabs requests (narration, sound effects, music) one video's preparation runs at once. Match the plan's concurrency limit (Creator: 3, Pro: 5). */
+				ELEVENLABS_CONCURRENCY: bindings.text("3"),
 				/** Sent with requests to stock-media APIs. */
 				OUTBOUND_USER_AGENT: bindings.text("video-service/1.0"),
 

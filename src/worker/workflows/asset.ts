@@ -6,14 +6,15 @@ import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloud
 import { NonRetryableError } from "cloudflare:workflows";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client.ts";
-import { isRetryable } from "../lib/util.ts";
+import { failureMessage, isRetryable } from "../lib/util.ts";
 import { VIDEO_MODEL, downloadVideo, getVideoJob, submitVideo } from "../providers/openrouter.ts";
 import { assetDataUrl, assetsById, executeGeneration, failAsset, storeAsset } from "../services/assets.ts";
 import { OPENROUTER_CLIP_USD_PER_SECOND } from "../services/pricing.ts";
 import { recordUsage } from "../services/usage.ts";
 
 const once = { retries: { limit: 0, delay: 1000 }, timeout: "15 minutes" } as const;
-const patient = { retries: { limit: 2, delay: "15 seconds", backoff: "exponential" }, timeout: "15 minutes" } as const;
+// Rate limits are already waited out inside the provider calls; these retries cover longer outages and storage blips.
+const patient = { retries: { limit: 3, delay: "20 seconds", backoff: "exponential" }, timeout: "15 minutes" } as const;
 
 /** Turns permanent failures (bad input, refused prompt) into errors that are not retried. */
 async function attempt<T>(work: () => Promise<T>): Promise<T> {
@@ -104,7 +105,8 @@ export class AssetWorkflow extends WorkflowEntrypoint<Env, { assetId: string }> 
 				await storeAsset(asset, body, "video/mp4", { meta: { model: (spec?.type === "video" && spec.model) || VIDEO_MODEL, provider: "openrouter" } });
 			});
 		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
+			// Our own errors are written for the person; a raw database or network error is not, and is logged instead.
+			const message = failureMessage(error, `asset ${assetId}`);
 			await step.do("mark failed", () => failAsset(assetId, message));
 		}
 	}

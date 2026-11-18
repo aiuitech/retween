@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { composeTimeline } from "../../../shared/compose.ts";
-import { EMPTY_STORYBOARD, Scene, Storyboard } from "../../../shared/storyboard.ts";
+import { EMPTY_STORYBOARD, Scene, Storyboard, StoryboardMusic } from "../../../shared/storyboard.ts";
 import { ASPECT_RATIOS, RESOLUTIONS } from "../../../shared/timeline.ts";
 import { db, schema } from "../db/client.ts";
 import { AppError, badRequest, newId, notFound } from "../lib/util.ts";
@@ -13,10 +13,14 @@ import { deletePrefix } from "../services/storage.ts";
 import { getControls, limitResolution } from "../services/controls.ts";
 import { assertBudget, projectVideoSpend } from "../services/usage.ts";
 import {
+	type DetailOptions,
+	type RegenerateOptions,
 	type Video,
+	cancelPipeline,
 	composeAndSave,
 	emptyResolved,
 	getVideo,
+	pipelineInputHash,
 	planMedia,
 	runCompose,
 	startPipeline,
@@ -28,6 +32,26 @@ import type { Project } from "../services/projects.ts";
 import { defineOp, waitSeconds } from "./registry.ts";
 
 const videoId = z.string().describe("Video id (vid_…)");
+
+/** What video.get and video.prepare include beyond the essentials. Polling with the defaults stays small. */
+const detail = {
+	storyboard: z.boolean().default(false).describe("Include the whole storyboard (large; you usually have it already)"),
+	media: z.enum(["summary", "full"]).default("summary").describe("summary: counts and whatever is not ready yet. full: every scene's narration and visual"),
+	timing: z.boolean().default(false).describe("Include each scene's start and length in the composed timeline (video.timing has much more)"),
+};
+const detailOptions = (input: { storyboard: boolean; media: "summary" | "full"; timing: boolean }): DetailOptions => input;
+
+/** In words, what a preparation run will generate (empty when everything is reused). */
+async function preview(videoId: string, userId: string, regenerate: RegenerateOptions) {
+	const [first, second] = await Promise.all([planMedia(videoId, userId, 1, regenerate, { dryRun: true }), planMedia(videoId, userId, 2, regenerate, { dryRun: true })]);
+	const byKind = new Map<string, string[]>();
+	for (const item of [...first.todo, ...second.todo]) {
+		const list = byKind.get(item.kind) ?? [];
+		list.push(item.sceneId ?? "video");
+		byKind.set(item.kind, list);
+	}
+	return Object.fromEntries([...byKind].map(([kind, scenes]) => [kind, kind === "icon" ? scenes.length : scenes]));
+}
 const aspect = z.enum(ASPECT_RATIOS);
 const resolution = z.enum(RESOLUTIONS);
 
@@ -142,31 +166,61 @@ export const videoOps = [
 		name: "video.get",
 		title: "Get video",
 		description:
-			"A video with its storyboard, the state of each scene's media, pipeline progress, composed timing, recent renders, " +
+			"A video's status, pipeline progress, media state, composed length, recent renders, " +
 			"and what it has cost so far as billed (spend: generated media, including versions it replaced, and renders; previews, drafts and storage are account-wide). " +
-			"Use waitSeconds to wait for video.prepare to finish.",
-		input: z.object({ videoId, waitSeconds: waitSeconds.default(0) }),
+			"Kept small for polling: media is summarised (counts, and whatever is not ready, with errors) and the storyboard is left out; " +
+			"pass storyboard: true, media: \"full\" or timing: true for more. Use waitSeconds to wait for video.prepare to finish.",
+		input: z.object({ videoId, waitSeconds: waitSeconds.default(0), ...detail }),
 		readOnly: true,
 		handler: async (input, { actor }) => {
 			const { video, project } = await getVideo(actor, input.videoId);
 			const current = video.status === "preparing" && input.waitSeconds ? await waitWhilePreparing(video.id, input.waitSeconds) : video;
-			return { video: await videoDetail(current, project) };
+			return { video: await videoDetail(current, project, detailOptions(input)) };
 		},
 	}),
 
 	defineOp({
 		name: "video.update",
 		title: "Update video",
-		description: "Change a video's title, brief or primary aspect ratio.",
-		input: z.object({ videoId, title: z.string().min(1).max(200).optional(), brief: z.string().max(4000).optional(), aspect: aspect.optional() }),
+		description:
+			"Change a video's title, brief, primary aspect ratio or music, without sending the storyboard again. " +
+			"`music` is merged into the current settings: e.g. { prompt: \"…\" } to re-score, { assetId } to use an uploaded bed, { model } to change who composes it, " +
+			"{ volume, duckedVolume } to rebalance, { enabled: false } for none, or null to go back to the brand's music. " +
+			"Run video.prepare after changing the prompt or model (only the music is regenerated), or video.compose after a volume change or a new assetId.",
+		input: z.object({
+			videoId,
+			title: z.string().min(1).max(200).optional(),
+			brief: z.string().max(4000).optional(),
+			aspect: aspect.optional(),
+			music: StoryboardMusic.partial().nullable().optional().describe("Music settings to merge in; null clears them"),
+		}),
 		handler: async (input, { actor }) => {
 			const { video } = await getVideo(actor, input.videoId);
+			let storyboard = video.storyboard;
+			if (input.music !== undefined) {
+				const { music: _old, ...rest } = storyboard;
+				const merged = input.music === null ? undefined : { ...storyboard.music, ...input.music };
+				// Pointing at an uploaded bed replaces a prompt (and the other way round), so the two never fight.
+				if (merged && input.music?.assetId) delete merged.prompt;
+				if (merged && input.music?.prompt) delete merged.assetId;
+				storyboard = merged ? { ...rest, music: merged } : rest;
+				if (merged?.assetId) {
+					const found = await assetsById(video.projectId, [merged.assetId]);
+					if (!found.has(merged.assetId)) throw badRequest(`Asset ${merged.assetId} does not exist in this project`);
+				}
+			}
 			const [updated] = await db
 				.update(schema.videos)
-				.set({ title: input.title ?? video.title, brief: input.brief ?? video.brief, aspect: input.aspect ?? video.aspect })
+				.set({
+					title: input.title ?? video.title,
+					brief: input.brief ?? video.brief,
+					aspect: input.aspect ?? video.aspect,
+					storyboard,
+					...(input.music !== undefined && video.status !== "preparing" ? { status: "draft" as const } : {}),
+				})
 				.where(eq(schema.videos.id, video.id))
 				.returning();
-			return { video: await videoSummary(updated!) };
+			return { video: await videoSummary(updated!), music: updated!.storyboard.music ?? null };
 		},
 	}),
 
@@ -320,8 +374,11 @@ export const videoOps = [
 		description:
 			"Generate everything the storyboard needs and compose the timeline. Narration, stills, stock and sound effects are produced first; " +
 			"once the voice has landed, clips and music are sized to it, and every scene, bullet and caption is timed to the recorded audio. " +
-			"Only scenes that changed since the last run are regenerated. Spends generation budget. Takes from a few seconds to a few minutes: " +
-			"if it is still running when this returns, call video.get with waitSeconds until status is ready or failed.",
+			"Only what changed since the last run is regenerated (a scene's narration text, voice or speed; a visual prompt; the music prompt or model); " +
+			"`willGenerate` lists it. Spends generation budget. Takes from a few seconds to a few minutes: " +
+			"if it is still running when this returns, call video.get with waitSeconds until status is ready or failed. " +
+			"Calling it again while a run is going restarts the run with the latest storyboard (media already in flight is kept); video.cancel stops it. " +
+			"Music never holds the video up: a bed that is still being composed is added when it lands (pipeline.musicPending).",
 		input: z.object({
 			videoId,
 			regenerate: z
@@ -334,20 +391,50 @@ export const videoOps = [
 				.optional()
 				.describe("Force new takes of media that would otherwise be reused"),
 			waitSeconds,
+			...detail,
 		}),
 		paid: true,
 		handler: async (input, { actor }) => {
 			const { video, project } = await getVideo(actor, input.videoId);
 			if (!video.storyboard.scenes.length) throw badRequest("The storyboard has no scenes yet. Add them with storyboard.set or scene.save.");
+			const regenerate = input.regenerate ?? {};
+			const inputHash = await pipelineInputHash(video, project.brand, regenerate);
 			const running = video.status === "preparing" && Date.now() - (video.pipeline.startedAt ?? 0) < 45 * 60_000;
-			if (!running) {
+			// The same request again just follows the run in progress; anything changed (or forced) restarts it.
+			const following = running && video.pipeline.inputHash === inputHash && !Object.keys(regenerate).length;
+			const willGenerate = following ? undefined : await preview(video.id, actor.id, regenerate);
+			if (!following) {
 				await assertBudget(actor);
-				await startPipeline(video, actor.id, { regenerate: input.regenerate });
+				await startPipeline(video, actor.id, { regenerate, inputHash });
 			}
 			const current = await waitWhilePreparing(video.id, input.waitSeconds);
+			const notes = [
+				running && !following ? "A run was already going; it was restarted with the current storyboard." : "",
+				current.status === "preparing" ? "Still preparing. Call video.get with waitSeconds to follow it." : "",
+			].filter(Boolean);
 			return {
-				video: await videoDetail(current, project),
-				...(current.status === "preparing" ? { note: "Still preparing. Call video.get with waitSeconds to follow it." } : {}),
+				...(willGenerate ? { willGenerate } : { following: "A run with the same storyboard is already going; this follows it." }),
+				video: await videoDetail(current, project, detailOptions(input)),
+				...(notes.length ? { note: notes.join(" ") } : {}),
+			};
+		},
+	}),
+
+	defineOp({
+		name: "video.cancel",
+		title: "Stop preparing",
+		description:
+			"Stop a video.prepare that is running: the run stops and media it is still waiting for (narration, visuals, a slow music bed) is abandoned and marked failed, " +
+			"so the next video.prepare makes it afresh. The video keeps its last composed timeline, if it had one. Work a vendor had already started may still be charged.",
+		input: z.object({ videoId }),
+		handler: async (input, { actor }) => {
+			const { video, project } = await getVideo(actor, input.videoId);
+			const result = await cancelPipeline(video, project);
+			const updated = (await db.query.videos.findFirst({ where: eq(schema.videos.id, video.id) }))!;
+			return {
+				...result,
+				status: updated.status,
+				note: result.stopped || result.abandoned.length ? "Stopped." : "Nothing was being prepared.",
 			};
 		},
 	}),
@@ -375,7 +462,8 @@ export const videoOps = [
 		name: "video.render",
 		title: "Render a video",
 		description:
-			"Export the composed video as MP4. Render one aspect ratio and resolution, or pass `exports` for several at once: " +
+			"Export the composed video as MP4. The soundtrack is levelled to the brand's loudness target (default -14 LUFS, peaks under -1 dBTP; see `loudness`). " +
+			"Render one aspect ratio and resolution, or pass `exports` for several at once: " +
 			"the same timeline is laid out afresh for each aspect ratio. Rendering takes roughly as long as the video for 1080p. " +
 			"Follow progress with render.get; the finished render has a download link.",
 		input: z.object({
@@ -383,6 +471,10 @@ export const videoOps = [
 			aspect: aspect.optional().describe("Defaults to the video's primary aspect ratio"),
 			resolution: resolution.optional().describe("Short side in pixels. Defaults to the brand's resolution, or 1080p"),
 			exports: z.array(z.object({ aspect, resolution: resolution.default("1080p") })).min(1).max(8).optional().describe("Several exports in one call"),
+			loudness: z
+				.union([z.number().min(-30).max(-9), z.literal("off")])
+				.optional()
+				.describe('Level the soundtrack to this integrated loudness (LUFS), peaks under -1 dBTP. Defaults to the brand\'s audio.loudness, else -14. "off" keeps the mix as it is'),
 			waitSeconds,
 		}),
 		paid: true,
@@ -401,7 +493,7 @@ export const videoOps = [
 			});
 			const timeline = await freshTimeline(video, project);
 			const renders = [];
-			for (const target of targets) renders.push(await createRender(actor, video, project, target, timeline));
+			for (const target of targets) renders.push(await createRender(actor, video, project, { ...target, loudness: input.loudness }, timeline));
 
 			const deadline = Date.now() + input.waitSeconds * 1000;
 			let current = renders;

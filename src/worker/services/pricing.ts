@@ -7,6 +7,7 @@
  * Included free allowances (R2's 10 GB, containers' monthly vCPU/GiB hours) are
  * ignored: each account is charged the marginal rate.
  */
+import { OPENROUTER_VOICE_MODELS } from "../../../shared/audio-models.ts";
 
 /**
  * ElevenLabs API pricing (https://elevenlabs.io/pricing/api), billed in dollars:
@@ -24,6 +25,11 @@ export const ELEVENLABS = {
 	transcriptionUsdPerHour: 0.2,
 	transcriptionKeytermsUsdPerHour: 0.05,
 };
+
+/** OpenRouter narration list prices per 1,000 characters, used only when its catalogue and its generation lookup both fail. */
+export const OPENROUTER_VOICE_USD_PER_1K: Record<string, number> = Object.fromEntries(
+	OPENROUTER_VOICE_MODELS.filter((model) => model.usdPer1kCharacters !== undefined).map((model) => [model.id, model.usdPer1kCharacters!]),
+);
 
 /** fal list prices, used when its pricing API cannot be reached or the request reported no billable units. */
 export const FAL_LIST_USD: Record<string, number> = {

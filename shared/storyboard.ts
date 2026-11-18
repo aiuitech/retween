@@ -6,6 +6,7 @@
  * and footage exist, so scenes are exactly as long as their audio needs.
  */
 import { z } from "zod";
+import { MUSIC_MODEL_IDS } from "./audio-models.ts";
 import { BrandCaptions } from "./brand.ts";
 import { SCENE_TYPES, TRANSITIONS, TimelineLook } from "./timeline.ts";
 
@@ -298,6 +299,7 @@ export const StoryboardMusic = z.object({
 	enabled: z.boolean().optional().describe("Set false for no music. Defaults to on when the brand has a music bed or prompt"),
 	assetId: z.string().optional().describe("An existing audio asset to use as the bed"),
 	prompt: z.string().max(2000).optional().describe("Or describe music to generate for this video"),
+	model: z.enum(MUSIC_MODEL_IDS).optional().describe("Who composes it. Defaults to the brand's audio.musicModel, else elevenlabs"),
 	volume: z.number().min(0).max(1).optional(),
 	duckedVolume: z.number().min(0).max(1).optional().describe("Volume while narration is speaking"),
 });

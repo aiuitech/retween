@@ -2,12 +2,35 @@
  * ElevenLabs: narration (with character-level timestamps), music and sound effects.
  */
 import { env } from "cloudflare:workers";
-import { AppError, base64ToBytes, upstreamError } from "../lib/util.ts";
+import { AppError, base64ToBytes, isRateLimited, upstreamError, withRetry } from "../lib/util.ts";
 
 const BASE = "https://api.elevenlabs.io";
 const OUTPUT_FORMAT = "mp3_44100_128";
 
 const headers = () => ({ "xi-api-key": env.ELEVENLABS_API_KEY, "content-type": "application/json" });
+
+/**
+ * Calls ElevenLabs, waiting and trying again while it answers 429. Plans cap
+ * how many requests may run at once (3 on Creator), and a 429 for "too many
+ * concurrent requests" clears as soon as another request finishes, so a short,
+ * jittered wait is usually enough. `retry-after` is honoured when it is sent.
+ */
+async function call(provider: string, url: string, init: RequestInit): Promise<Response> {
+	return withRetry(
+		async () => {
+			const response = await fetch(url, init);
+			if (!response.ok) throw await upstreamError(provider, response);
+			return response;
+		},
+		{
+			attempts: 8,
+			baseDelayMs: 2_000,
+			maxDelayMs: 30_000,
+			retryIf: isRateLimited,
+			delayFor: (error) => (error instanceof AppError ? (error.details as { retryAfterMs?: number } | undefined)?.retryAfterMs : undefined),
+		},
+	);
+}
 
 /** What ElevenLabs says about a request's billing, from its response headers. */
 export interface Billing {
@@ -49,20 +72,16 @@ export async function synthesizeSpeech(input: {
 		...(speed !== undefined ? { speed } : {}),
 		...(speakerBoost !== undefined ? { use_speaker_boost: speakerBoost } : {}),
 	};
-	const response = await fetch(
-		`${BASE}/v1/text-to-speech/${encodeURIComponent(input.voiceId)}/with-timestamps?output_format=${OUTPUT_FORMAT}`,
-		{
-			method: "POST",
-			headers: headers(),
-			body: JSON.stringify({
-				text: input.text,
-				model_id: input.modelId,
-				...(input.language ? { language_code: input.language } : {}),
-				...(Object.keys(voiceSettings).length ? { voice_settings: voiceSettings } : {}),
-			}),
-		},
-	);
-	if (!response.ok) throw await upstreamError("Voice", response);
+	const response = await call("Voice", `${BASE}/v1/text-to-speech/${encodeURIComponent(input.voiceId)}/with-timestamps?output_format=${OUTPUT_FORMAT}`, {
+		method: "POST",
+		headers: headers(),
+		body: JSON.stringify({
+			text: input.text,
+			model_id: input.modelId,
+			...(input.language ? { language_code: input.language } : {}),
+			...(Object.keys(voiceSettings).length ? { voice_settings: voiceSettings } : {}),
+		}),
+	});
 	const json = (await response.json()) as {
 		audio_base64: string;
 		alignment?: {
@@ -84,28 +103,52 @@ export async function synthesizeSpeech(input: {
 	};
 }
 
-async function audioOrThrow(provider: string, response: Response): Promise<{ audio: Uint8Array } & Billing> {
-	if (!response.ok) throw await upstreamError(provider, response);
+async function audioOf(response: Response): Promise<{ audio: Uint8Array } & Billing> {
 	return { audio: new Uint8Array(await response.arrayBuffer()), ...billingOf(response) };
 }
 
-/** A music bed, 10 s to 5 min. */
+/** Longest a music request may take before it is given up on (and retried by the workflow). */
+const MUSIC_TIMEOUT_MS = 9 * 60_000;
+
+/** Turns our own time limit into an error that says what happened (and is retried as a provider failure). */
+export async function musicTimeout<T>(work: () => Promise<T>): Promise<T> {
+	try {
+		return await work();
+	} catch (error) {
+		if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+			throw new AppError(502, "Music error (504): the piece took longer than 9 minutes to compose. Try again, or use a faster model (audio.musicModel google/lyria-3-clip-preview)", "upstream_error");
+		}
+		throw error;
+	}
+}
+
+/**
+ * A music bed, 10 s to 5 min. Uses the streaming endpoint: the plain one sends
+ * nothing until the whole piece is composed, which for longer beds runs past
+ * the ~100 s gateway limit in front of ElevenLabs and ends in a 524 (after the
+ * work has been done and charged). Streamed audio keeps the connection alive.
+ */
 export async function composeMusic(input: { prompt: string; seconds: number; instrumental: boolean }) {
-	const response = await fetch(`${BASE}/v1/music?output_format=${OUTPUT_FORMAT}`, {
-		method: "POST",
-		headers: headers(),
-		body: JSON.stringify({
-			prompt: input.prompt,
-			music_length_ms: Math.round(Math.min(300, Math.max(10, input.seconds)) * 1000),
-			force_instrumental: input.instrumental,
-		}),
+	const result = await musicTimeout(async () => {
+		const response = await call("Music", `${BASE}/v1/music/stream?output_format=${OUTPUT_FORMAT}`, {
+			method: "POST",
+			headers: headers(),
+			body: JSON.stringify({
+				prompt: input.prompt,
+				music_length_ms: Math.round(Math.min(300, Math.max(10, input.seconds)) * 1000),
+				force_instrumental: input.instrumental,
+			}),
+			signal: AbortSignal.timeout(MUSIC_TIMEOUT_MS),
+		});
+		return audioOf(response);
 	});
-	return audioOrThrow("Music", response);
+	if (result.audio.byteLength < 1024) throw new AppError(502, "Music returned no audio", "upstream_error");
+	return result;
 }
 
 /** A sound effect, 0.5–30 s. Omit `seconds` to let the model decide. */
 export async function generateSfx(input: { prompt: string; seconds?: number }) {
-	const response = await fetch(`${BASE}/v1/sound-generation?output_format=${OUTPUT_FORMAT}`, {
+	const response = await call("Sound effect", `${BASE}/v1/sound-generation?output_format=${OUTPUT_FORMAT}`, {
 		method: "POST",
 		headers: headers(),
 		body: JSON.stringify({
@@ -113,7 +156,7 @@ export async function generateSfx(input: { prompt: string; seconds?: number }) {
 			...(input.seconds ? { duration_seconds: Math.min(30, Math.max(0.5, input.seconds)) } : {}),
 		}),
 	});
-	return audioOrThrow("Sound effect", response);
+	return audioOf(response);
 }
 
 export interface Voice {
@@ -199,8 +242,7 @@ export async function transcribe(input: { file?: Blob; sourceUrl?: string; langu
 	if (input.language) form.set("language_code", input.language);
 	if (input.speakers) form.set("num_speakers", String(input.speakers));
 	for (const term of input.keyterms ?? []) form.append("keyterms", term);
-	const response = await fetch(`${BASE}/v1/speech-to-text`, { method: "POST", headers: { "xi-api-key": env.ELEVENLABS_API_KEY }, body: form });
-	if (!response.ok) throw await upstreamError("Transcription", response);
+	const response = await call("Transcription", `${BASE}/v1/speech-to-text`, { method: "POST", headers: { "xi-api-key": env.ELEVENLABS_API_KEY }, body: form });
 	const json = (await response.json()) as {
 		language_code?: string;
 		audio_duration_secs?: number;

@@ -8,6 +8,7 @@
  * render (a low-quality slice), so it remembers the last few jobs and their
  * files: a draft can finish and wait to be collected while the next one runs.
  */
+import { type MasterResult, type MasterTarget, masterLoudness } from "./master.ts";
 import { type BrowserLog, type HeadlessBrowser, makeCancelSignal, openBrowser, renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -64,8 +65,17 @@ export const defaultConcurrency = () => {
 	return Number.isInteger(fromEnv) && fromEnv > 0 ? fromEnv : Math.max(1, Math.min(8, availableCpus()));
 };
 
-export type Stage = "preparing" | "rendering" | "encoding" | "done";
-export type Output = { bytes: number; width: number; height: number; fps: number; durationInFrames: number; contentType: "video/mp4" };
+export type Stage = "preparing" | "rendering" | "encoding" | "mastering" | "done";
+export type Output = {
+	bytes: number;
+	width: number;
+	height: number;
+	fps: number;
+	durationInFrames: number;
+	contentType: "video/mp4";
+	/** The soundtrack's loudness before and after levelling, when it was levelled. */
+	loudness?: MasterResult;
+};
 export type Status = {
 	state: "idle" | "rendering" | "done" | "error";
 	jobId: string | null;
@@ -187,15 +197,19 @@ export type RenderOptions = {
 	draft?: boolean;
 	/** Render only these frames, [first, last] inclusive. */
 	frameRange?: [number, number];
+	/** Level the finished soundtrack to this loudness (ignored for drafts). */
+	master?: MasterTarget;
 };
 
 /** Starts a render in the background. The caller has already checked that none is running. */
 export function startRender(jobId: string, props: RenderProps, options: RenderOptions = {}): void {
 	const { cancelSignal, cancel } = makeCancelSignal();
+	const abort = new AbortController();
 	let cancelled = false;
 	const cancelThis = () => {
 		cancelled = true;
 		cancel();
+		abort.abort();
 	};
 	cancelCurrent = cancelThis;
 	const { draft = false, frameRange } = options;
@@ -270,12 +284,33 @@ export function startRender(jobId: string, props: RenderProps, options: RenderOp
 			},
 		});
 
+		let loudness: MasterResult | undefined;
+		if (options.master && !draft) {
+			setStage("mastering");
+			try {
+				loudness = (await masterLoudness(file, options.master, abort.signal)) ?? undefined;
+				log("render.master", { jobId, target: options.master.lufs, ...loudness });
+			} catch (err) {
+				if (cancelled) throw err;
+				// A soundtrack that could not be levelled is still a usable export.
+				job.warnings.push(`The soundtrack could not be levelled to ${options.master.lufs} LUFS, so it keeps its original level (${errorMessage(err)})`);
+			}
+		}
+
 		const { size } = fs.statSync(file);
 		const entry = jobs.get(jobId);
 		if (entry) entry.file = file;
 		job.renderedFrames = job.totalFrames;
 		job.progress = 1;
-		job.output = { bytes: size, width: composition.width, height: composition.height, fps: composition.fps, durationInFrames: job.totalFrames, contentType: "video/mp4" };
+		job.output = {
+			bytes: size,
+			width: composition.width,
+			height: composition.height,
+			fps: composition.fps,
+			durationInFrames: job.totalFrames,
+			contentType: "video/mp4",
+			...(loudness ? { loudness } : {}),
+		};
 		job.state = "done";
 		const seconds = (Date.now() - renderStarted) / 1000;
 		setStage("done", { bytes: size, renderSeconds: Math.round(seconds * 10) / 10, framesPerSecond: Math.round((job.totalFrames / seconds) * 10) / 10, warnings: job.warnings.length });

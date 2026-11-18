@@ -28,7 +28,7 @@ src/worker/        the Cloudflare Worker
   routes/mcp.ts      ops → MCP tools
   index.ts           ops → REST (POST /api/v1/ops/<name>), auth, uploads, signed file URLs
   workflows/         asset generation, prepare → compose pipeline, container rendering
-  providers/         OpenRouter (images, clips), ElevenLabs (voice, music, sfx), stock sources, YouTube
+  providers/         OpenRouter (images, clips, voice, music, timing), ElevenLabs (voice, music, sfx), stock sources, YouTube
   auth/              better-auth: Google, admin, API keys, device flow, OAuth provider for MCP
 src/web/           the web app (TanStack Start: pages in routes/, rendered by the Worker)
 cli/               the CLI: builds its commands from GET /api/v1/ops
@@ -134,7 +134,8 @@ Every vendor charge is written to the usage ledger (`usage_events`) against the 
 
 | Vendor | What is charged | How the cost is known (`basis`) |
 | --- | --- | --- |
-| OpenRouter | images, video clips | `vendor`: `usage.cost` from the response (`list` if it is missing) |
+| OpenRouter | images, video clips, music (Lyria) | `vendor`: `usage.cost` from the response (`list` if it is missing) |
+| OpenRouter | narration (Kokoro, Gemini TTS, Voxtral, …) and the transcription that times it | `vendor`: the generation's cost looked up by `X-Generation-Id` (`list`: characters × the catalogue price, if the lookup has nothing yet) |
 | ElevenLabs | narration | `metered`: the `character-cost` header × our rate per 1k characters |
 | ElevenLabs | music, sound effects | `metered` / `list`: length × published per-minute price |
 | fal | cut-outs, vector art | `metered`: `x-fal-billable-units` × the endpoint's price from fal's pricing API (`list` as a fallback) |
@@ -142,6 +143,18 @@ Every vendor charge is written to the usage ledger (`usage_events`) against the 
 | Cloudflare R2 | stored assets and renders | `metered`: a nightly cron charges each account one day of storage |
 
 Rates that are not reported per request live in `src/worker/services/pricing.ts`; keep them in line with the invoices.
+
+## Voice and music vendors
+
+Narration goes to ElevenLabs unless the brand's `narration.modelId` names an OpenRouter speech model (`vendor/model`, e.g. `hexgrad/kokoro-82m` at about $0.0006 per 1,000 characters against ElevenLabs' $0.04–0.08). `voice.list` with `models: true` lists them all with prices, and with `model` lists one model's voices. OpenRouter voices return no timestamps, so each take is transcribed with word timings (`openai/whisper-large-v3-turbo`, about $0.00005 a line) and the heard words are aligned to the script (`alignmentFromWords` in `shared/narration.ts`), giving captions and cues the same timing data ElevenLabs' alignment gives. A cost-controls `narrationModel` can force either kind; a voice that belongs to the other vendor falls back to the model's default voice.
+
+Music beds come from ElevenLabs (streamed, so long beds do not hit the gateway timeout) or from Lyria 3 via OpenRouter (`audio.musicModel` or `storyboard.music.model`: `google/lyria-3-pro-preview` for a full piece at $0.08, `google/lyria-3-clip-preview` for a 30 s loop at $0.04).
+
+ElevenLabs caps simultaneous requests per plan (Creator: 3). Preparation starts ElevenLabs jobs at most `ELEVENLABS_CONCURRENCY` at a time (`cloudflare.config.ts`), and every ElevenLabs call waits and retries on a 429.
+
+## Loudness
+
+Exports are levelled after rendering: two-pass EBU R128 `loudnorm` in the renderer (`renderer/server/master.ts`), video stream copied, to the brand's `audio.loudness` (default −14 LUFS, true peak ≤ −1 dBTP; `"off"` keeps the mix as it is). `video.render` takes a per-export `loudness`. `video.audio` measures the mix before levelling and says what the render will do to it.
 
 **Reconciliation.** Each night, after accruing storage, two optional jobs replace metered costs from the past week with what the vendor billed (`basis` becomes `vendor`). `admin.reconcile` runs them on demand, e.g. before producing statements for a month that just closed.
 

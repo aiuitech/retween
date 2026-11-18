@@ -8,6 +8,7 @@
  * there into the concrete theme the renderer needs.
  */
 import { z } from "zod";
+import { DEFAULT_MASTER_LUFS, MASTER_TRUE_PEAK, MUSIC_MODELS, MUSIC_MODEL_IDS } from "./audio-models.ts";
 import { ASPECT_RATIOS, RESOLUTIONS, TRANSITIONS, type TimelineTheme } from "./timeline.ts";
 
 const hexColor = z
@@ -68,9 +69,11 @@ export const BrandMessaging = z
 
 export const BrandNarration = z
 	.object({
-		voiceId: short.describe("ElevenLabs voice ID used for narration"),
+		voiceId: short.describe("Narration voice: an ElevenLabs voice ID, or for an OpenRouter model one of its voice names (voice.list with that model)"),
 		voiceName: short,
-		modelId: short.describe("ElevenLabs model, e.g. eleven_multilingual_v2 or eleven_v3"),
+		modelId: short.describe(
+			"Voice model: ElevenLabs (eleven_multilingual_v2, eleven_flash_v2_5, eleven_v3) or a much cheaper OpenRouter speech model named vendor/model, e.g. hexgrad/kokoro-82m or google/gemini-3.8-flash-tts (voice.list with models: true lists them with prices)",
+		),
 		language: short.describe("ISO 639-1 code, e.g. en"),
 		stability: z.number().min(0).max(1),
 		similarity: z.number().min(0).max(1),
@@ -165,12 +168,20 @@ export const BrandCaptions = z
 export const BrandAudio = z
 	.object({
 		musicPrompt: text.describe("Genre, tempo, instrumentation and mood for generated music beds"),
+		musicModel: z
+			.enum(MUSIC_MODEL_IDS)
+			.describe(`Who composes generated music beds. ${MUSIC_MODELS.map((model) => `${model.id}: ${model.label}`).join(". ")}`),
 		musicAssetId: assetId.describe("Default music bed used when a video does not name one"),
 		musicVolume: z.number().min(0).max(1),
 		duckedVolume: z.number().min(0).max(1).describe("Music volume while narration is speaking"),
 		introStingAssetId: assetId.describe("Sonic logo played over the first scene"),
 		outroStingAssetId: assetId.describe("Sonic logo played over the last scene"),
 		sfxPolicy: text.describe("When sound effects are welcome and when they are not"),
+		loudness: z
+			.union([z.number().min(-30).max(-9), z.literal("off")])
+			.describe(
+				`Integrated loudness every export is levelled to, in LUFS, with peaks held under ${MASTER_TRUE_PEAK} dBTP. Default ${DEFAULT_MASTER_LUFS} (YouTube and most platforms); -16 suits podcasts and Apple. "off" leaves the mix as it is`,
+			),
 	})
 	.partial();
 
