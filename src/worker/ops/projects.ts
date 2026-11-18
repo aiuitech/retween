@@ -6,6 +6,7 @@ import { NOTE_KINDS } from "../db/schema.ts";
 import { badRequest, newId, notFound } from "../lib/util.ts";
 import { deletePrefix } from "../services/storage.ts";
 import { WORKFLOW_GUIDE, projectBrief } from "../services/brief.ts";
+import { CRAFT, CRAFT_TOPICS, craftTopic } from "../services/craft.ts";
 import { brandCompleteness, getProject, listProjects, projectSummary } from "../services/projects.ts";
 import { describeControls } from "../../../shared/controls.ts";
 import { getControls } from "../services/controls.ts";
@@ -37,10 +38,16 @@ export const projectOps = [
 	defineOp({
 		name: "guide",
 		title: "How to make a video",
-		description: "The recommended order of operations for producing a video. Read this once if you have not used Retween before.",
-		input: z.object({}),
+		description:
+			"The recommended order of operations for producing a video (read it once if you have not used Retween before), " +
+			"or, with a topic, short notes on the craft: what makes an opening, pacing, structure, Shorts, thumbnails, publishing, originality at volume and working with a reviewer.",
+		input: z.object({ topic: z.enum(CRAFT_TOPICS).optional().describe("A craft topic. Leave out for the workflow") }),
 		readOnly: true,
-		handler: async () => ({ guide: WORKFLOW_GUIDE }),
+		handler: async (input) => {
+			if (!input.topic) return { guide: WORKFLOW_GUIDE, topics: CRAFT.map(({ topic, summary }) => ({ topic, summary })) };
+			const item = craftTopic(input.topic)!;
+			return { topic: item.topic, title: item.title, guide: item.body };
+		},
 	}),
 
 	defineOp({

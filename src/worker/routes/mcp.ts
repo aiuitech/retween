@@ -12,6 +12,7 @@ import { AppError, isTransient } from "../lib/util.ts";
 import { opsFor } from "../ops/index.ts";
 import { INLINE_IMAGE, type InlineImage, invokeOp } from "../ops/registry.ts";
 import { WORKFLOW_GUIDE } from "../services/brief.ts";
+import { CRAFT } from "../services/craft.ts";
 
 export const toolName = (opName: string) => opName.replace(/\./g, "_");
 
@@ -61,6 +62,16 @@ function buildServer(actor: Actor): McpServer {
 		);
 	}
 
+	// Craft notes as resources, so clients that read resources can pull one in only when it is wanted.
+	for (const item of CRAFT) {
+		server.registerResource(
+			`guide-${item.topic}`,
+			`retween://guide/${item.topic}`,
+			{ title: item.title, description: item.summary, mimeType: "text/markdown" },
+			async (uri) => ({ contents: [{ uri: uri.href, mimeType: "text/markdown", text: `# ${item.title}\n\n${item.body}` }] }),
+		);
+	}
+
 	server.registerPrompt(
 		"make_video",
 		{
@@ -80,7 +91,7 @@ function buildServer(actor: Actor): McpServer {
 						text:
 							`Make a video about: ${topic}\n` +
 							(project ? `Use the Retween project "${project}".\n` : "Ask me which Retween project to use, or offer to create one.\n") +
-							`\n${WORKFLOW_GUIDE}\n\nShow me the storyboard and the estimate before you run video_prepare.`,
+							`\n${WORKFLOW_GUIDE}\n\nRead guide with the topics that fit this video (at least "hook" and "structure"). Show me the storyboard and the estimate before you run video_prepare, and send me a review link before publishing.`,
 					},
 				},
 			],
