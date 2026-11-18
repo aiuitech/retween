@@ -3,6 +3,7 @@ import { BrandKit } from "../../../shared/brand.ts";
 import type { Actor } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
 import { notFound } from "../lib/util.ts";
+import { notSceneMedia } from "./assets.ts";
 
 export type Project = typeof schema.projects.$inferSelect;
 
@@ -27,7 +28,7 @@ export async function projectSummary(project: Project) {
 		db
 			.select({ n: count() })
 			.from(schema.assets)
-			.where(and(eq(schema.assets.projectId, project.id), eq(schema.assets.status, "ready"))),
+			.where(and(eq(schema.assets.projectId, project.id), eq(schema.assets.status, "ready"), notSceneMedia())),
 	]);
 	return {
 		id: project.id,

@@ -9,7 +9,7 @@ import { listVoices } from "../providers/elevenlabs.ts";
 import { IMAGE_ASPECTS, VIDEO_RESOLUTIONS } from "../providers/openrouter.ts";
 import { searchIcons, searchPlaces } from "../providers/iconify.ts";
 import { STOCK_PROVIDERS, availableProviders, getStockItem, searchStock } from "../providers/stock.ts";
-import { type Asset, assetView, assetsById, createAsset, deleteAsset, getAsset, startGeneration, waitForAssets } from "../services/assets.ts";
+import { type Asset, assetView, assetsById, createAsset, deleteAsset, getAsset, notSceneMedia, startGeneration, waitForAssets } from "../services/assets.ts";
 import { renderSheet } from "../services/inspect.ts";
 import { getProject } from "../services/projects.ts";
 import { signedUploadUrl } from "../services/storage.ts";
@@ -80,7 +80,7 @@ export const assetOps = [
 					input.kind ? eq(schema.assets.kind, input.kind) : undefined,
 					input.search ? like(schema.assets.name, `%${input.search}%`) : undefined,
 					input.tag ? sql`exists (select 1 from json_each(${schema.assets.tags}) where value = ${input.tag})` : undefined,
-					input.includeAuto || input.tag ? undefined : sql`not exists (select 1 from json_each(${schema.assets.tags}) where value = 'auto')`,
+					input.includeAuto || input.tag ? undefined : notSceneMedia(),
 				),
 				orderBy: desc(schema.assets.createdAt),
 				limit: input.limit,

@@ -6,7 +6,7 @@
  * flips the row to `ready` (or `failed`, with the reason).
  */
 import { env } from "cloudflare:workers";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { buildSpokenText, wordTimings } from "../../../shared/narration.ts";
 import type { Actor } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
@@ -195,6 +195,13 @@ async function readCapped(stream: ReadableStream, limit: number, what: string): 
 export async function failAsset(assetId: string, message: string): Promise<void> {
 	await db.update(schema.assets).set({ status: "failed", error: message.slice(0, 1000) }).where(eq(schema.assets.id, assetId));
 }
+
+/**
+ * Leaves out media generated for individual scenes (tagged "auto"): narration,
+ * scene visuals and the like. The Files tab and asset.list hide them by default,
+ * so counts use the same rule.
+ */
+export const notSceneMedia = () => sql`not exists (select 1 from json_each(${schema.assets.tags}) where value = 'auto')`;
 
 export async function deleteAsset(asset: Asset): Promise<void> {
 	if (asset.r2Key) await env.MEDIA.delete(asset.r2Key);
