@@ -183,6 +183,8 @@ export interface ResolvedMedia {
 	icons?: Record<string, { assetId: string; hash: string }>;
 	/** scene id → the scene picture's subject, cut out */
 	cutout?: Record<string, { assetId: string; hash: string }>;
+	/** scene id → an on-model still a generated clip animates from, made from its cast's reference images */
+	firstFrame?: Record<string, { assetId: string; hash: string }>;
 	/**
 	 * Media left out on purpose because the account's cost controls switched it
 	 * off: `visual:<scene id>` or `sfx:<scene id>:<index>` → reason. Compose falls back instead of failing.

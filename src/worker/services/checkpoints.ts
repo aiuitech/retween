@@ -23,6 +23,7 @@ export function resolvedIds(resolved: ResolvedMedia): string[] {
 		...Object.values(resolved.visual),
 		...Object.values(resolved.sfx),
 		...Object.values(resolved.cutout ?? {}),
+		...Object.values(resolved.firstFrame ?? {}),
 		...Object.values(resolved.icons ?? {}),
 		...(resolved.music ? [resolved.music] : []),
 	].map((entry) => entry.assetId);
@@ -109,6 +110,7 @@ export async function restorableMedia(projectId: string, checkpoint: Checkpoint)
 		visual: keep(checkpoint.resolved.visual),
 		sfx: keep(checkpoint.resolved.sfx),
 		cutout: keep(checkpoint.resolved.cutout),
+		firstFrame: keep(checkpoint.resolved.firstFrame),
 		icons: keep(checkpoint.resolved.icons),
 		music: checkpoint.resolved.music && found.has(checkpoint.resolved.music.assetId) ? checkpoint.resolved.music : undefined,
 	};

@@ -132,7 +132,7 @@ export async function checkReads(
 			sceneId: read.sceneId,
 			atSec: read.differences[0]!.atVideoSec,
 			message: `Scene "${read.sceneId}": the narration may not say what the script says: ${shown.join("; ")}${read.differences.length > 4 ? `; and ${read.differences.length - 4} more` : ""}. (${Math.round(read.matched * 100)}% of words heard as written; the transcriber can be wrong too, especially with names.)`,
-			fix: `Listen with video.draft { sceneIds: ["${read.sceneId}"] }. If a word is misread, add a respelling (brand.update narration.pronunciations, e.g. { term: "Retween", say: "Re-tween" }) and re-voice: video.prepare { regenerate: { narration: true, sceneIds: ["${read.sceneId}"] } }.`,
+			fix: `Listen with video.draft { sceneIds: ["${read.sceneId}"] }. If a word is misread, add a respelling (brand.update narration.pronunciations, e.g. { term: "Retween", say: "Re-tween" }) and re-voice: video.prepare { regenerate: { narration: true, sceneIds: ["${read.sceneId}"] } }. If a number or price was said wrong, write it out in words in the narration ("seven thousand two hundred dollars"). Numbers, currency and sound-alike spellings are already compared by value and sound, so what is reported here is worth a listen.`,
 		});
 	}
 	return { issues, reads: found, unheard };

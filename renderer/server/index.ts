@@ -103,6 +103,7 @@ function parseProps(input: unknown): RenderProps {
 		timeline.theme.logo?.src,
 		timeline.theme.logo?.darkSrc,
 		timeline.theme.watermark?.src,
+		timeline.theme.watermark?.darkSrc,
 		...timeline.scenes.map((s) => (s.background.kind === "image" || s.background.kind === "video" ? s.background.src : undefined)),
 		...timeline.audio.map((a) => a.src),
 	];

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { alignmentFromWords, buildSpokenText, wordTimings } from "./narration.ts";
+import { alignmentFromWords, buildSpokenText, pronunciationsFor, wordTimings } from "./narration.ts";
 
 const heard = [
 	{ word: "Retwean", start: 0.1, end: 0.5 },
@@ -64,4 +64,20 @@ test("words heard as one share its time", () => {
 	assert.equal(start20, 3.56);
 	assert.ok(end20 > start20 && endDollars > startDollars, JSON.stringify(words));
 	assert.equal(endDollars, 3.98);
+});
+
+test("only respellings whose term the line says are kept for it", () => {
+	const rules = [
+		{ term: "Dana", say: "Day-na" },
+		{ term: "SQL", say: "sequel" },
+		{ term: "Retween", say: "Re-tween" },
+		{ term: " ", say: "blank" },
+	];
+	assert.deepEqual(pronunciationsFor("Ask dana about the SQL export.", rules), [rules[0], rules[1]]);
+	// Whole words only: "Danaher" and "MySQL" do not use the rules.
+	assert.deepEqual(pronunciationsFor("Danaher runs MySQL.", rules), []);
+	assert.deepEqual(pronunciationsFor("Hello.", []), []);
+	// The kept rules respell the line exactly as the full list does.
+	const text = "Dana writes SQL in Retween.";
+	assert.equal(buildSpokenText(text, pronunciationsFor(text, rules)).spoken, buildSpokenText(text, rules).spoken);
 });

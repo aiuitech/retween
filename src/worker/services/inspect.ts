@@ -54,6 +54,7 @@ export async function inspectTimeline(video: Video, project: Project, trial?: Sc
 		const narration = { ...resolved.narration };
 		const visual = { ...resolved.visual };
 		const cutout = { ...resolved.cutout };
+		const firstFrame = { ...resolved.firstFrame };
 		if (!saved || !same(saved.narration, trial.narration) || !same(saved.voice, trial.voice)) {
 			delete narration[trial.id];
 			if (trial.narration?.trim()) notes.push(`Scene "${trial.id}" is timed from an estimate: its narration has not been voiced.`);
@@ -61,9 +62,10 @@ export async function inspectTimeline(video: Video, project: Project, trial?: Sc
 		if (!saved || !same(saved.visual, trial.visual)) {
 			delete visual[trial.id];
 			delete cutout[trial.id];
+			delete firstFrame[trial.id];
 			if (trial.visual && ["image", "vector", "video", "stock"].includes(trial.visual.source)) notes.push(`Scene "${trial.id}" shows the brand backdrop: its new visual has not been generated.`);
 		}
-		resolved = { ...resolved, narration, visual, cutout };
+		resolved = { ...resolved, narration, visual, cutout, firstFrame };
 	}
 
 	const subject = { ...video, storyboard, resolved };
@@ -77,6 +79,7 @@ export async function inspectTimeline(video: Video, project: Project, trial?: Sc
 				id,
 				kind: asset.kind,
 				ready: asset.status === "ready",
+				failed: asset.status === "failed",
 				durationSec: asset.durationMs != null ? asset.durationMs / 1000 : undefined,
 				words: asset.meta.words,
 				contentType: asset.contentType ?? undefined,

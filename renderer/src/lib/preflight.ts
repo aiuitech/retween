@@ -163,6 +163,7 @@ export async function preflight({ timeline }: RenderProps): Promise<Resolved> {
 	want(timeline.theme.logo?.src, "image", "theme.logo");
 	want(timeline.theme.logo?.darkSrc, "image", "theme.logo.darkSrc");
 	want(timeline.theme.watermark?.src, "image", "theme.watermark");
+	want(timeline.theme.watermark?.darkSrc, "image", "theme.watermark.darkSrc");
 	for (const scene of timeline.scenes) {
 		const bg = scene.background;
 		if (bg.kind === "image") want(bg.src, "image", `scene "${scene.id}" background`);

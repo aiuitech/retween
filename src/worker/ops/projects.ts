@@ -16,6 +16,20 @@ import { defineOp } from "./registry.ts";
 
 const projectId = z.string().describe("Project id (prj_…)");
 
+/**
+ * What a brand update changed, as dotted paths to their new values (null when
+ * cleared). Lists are compared whole. Keeps brand.update's reply small.
+ */
+function brandChanges(before: unknown, after: unknown, path = "", out: Record<string, unknown> = {}): Record<string, unknown> {
+	const isObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+	if (isObject(before) && isObject(after)) {
+		for (const key of new Set([...Object.keys(before), ...Object.keys(after)])) brandChanges(before[key], after[key], path ? `${path}.${key}` : key, out);
+		return out;
+	}
+	if (JSON.stringify(before ?? null) !== JSON.stringify(after ?? null)) out[path] = after ?? null;
+	return out;
+}
+
 export const projectOps = [
 	defineOp({
 		name: "whoami",
@@ -162,7 +176,8 @@ export const projectOps = [
 			"Change the brand kit. Send only what changes: objects are merged, lists and values are replaced, and null clears a field. " +
 			"Sections: identity, audience, messaging (tone, do/don't say, hooks, CTAs, glossary), narration (voice, pace, pronunciations), " +
 			"visual (palette, fonts, logo, image style lock and reference images), motion, captions, audio (music, sonic logo), " +
-			"format (aspect ratios, pacing, watermark), cast (recurring people/products with reference images) and instructions (standing instructions).",
+			"format (aspect ratios, pacing, watermark), cast (recurring people/products with reference images) and instructions (standing instructions). " +
+			"Returns only what changed (each changed field's path and new value, null when cleared); brand.get returns the whole kit.",
 		input: z.object({
 			projectId,
 			patch: z
@@ -174,7 +189,12 @@ export const projectOps = [
 			const merged = BrandKit.safeParse(mergeBrand(project.brand, input.patch));
 			if (!merged.success) throw badRequest("That change does not fit the brand kit", z.treeifyError(merged.error));
 			await db.update(schema.projects).set({ brand: merged.data }).where(eq(schema.projects.id, project.id));
-			return { brand: merged.data, ...brandCompleteness(merged.data) };
+			const changed = brandChanges(project.brand, merged.data);
+			return {
+				changed,
+				...(Object.keys(changed).length ? {} : { note: "Nothing changed: the brand kit already had these values." }),
+				...brandCompleteness(merged.data),
+			};
 		},
 	}),
 

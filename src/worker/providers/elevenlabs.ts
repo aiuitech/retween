@@ -19,7 +19,10 @@ async function call(provider: string, url: string, init: RequestInit): Promise<R
 	return withRetry(
 		async () => {
 			const response = await fetch(url, init);
-			if (!response.ok) throw await upstreamError(provider, response);
+			if (!response.ok) {
+				const error = await upstreamError(provider, response);
+				throw isOutOfCredits(response.status, error.message) ? await outOfCredits(provider, error) : error;
+			}
 			return response;
 		},
 		{
@@ -30,6 +33,78 @@ async function call(provider: string, url: string, init: RequestInit): Promise<R
 			delayFor: (error) => (error instanceof AppError ? (error.details as { retryAfterMs?: number } | undefined)?.retryAfterMs : undefined),
 		},
 	);
+}
+
+/**
+ * ElevenLabs answers 401 (sometimes 402 or 403) with "quota_exceeded" or "insufficient credits" when
+ * Retween's own ElevenLabs balance has run out. That is not the person's fault and no retry will help,
+ * so it is reported as such, with the alternatives that do not go through ElevenLabs.
+ */
+function isOutOfCredits(status: number, message: string): boolean {
+	return (status === 401 || status === 402 || status === 403) && /quota|credit|insufficient|exceeds your/i.test(message);
+}
+
+const OUT_OF_CREDITS_KEY = "/__cache/elevenlabs-out-of-credits";
+/** How long ElevenLabs work is reported as unavailable after it ran out of credits. */
+const OUT_OF_CREDITS_SECONDS = 15 * 60;
+
+const ALTERNATIVES: Record<string, string> = {
+	Music:
+		"Switch the music to a model that does not use ElevenLabs: video.update { music: { model: \"google/lyria-3-pro-preview\" } } " +
+		"(or google/lyria-3-clip-preview), or for every video brand.update { audio: { musicModel: \"google/lyria-3-pro-preview\" } }. Then run video.prepare again.",
+	Voice: "Narration can be voiced through OpenRouter instead, e.g. brand.update { narration: { modelId: \"hexgrad/kokoro-82m\" } } (voice.list { model } gives its voices).",
+	"Sound effect": "Leave the sound effect out for now, or use an uploaded one (sfx assetId).",
+};
+
+async function outOfCredits(provider: string, error: AppError): Promise<AppError> {
+	await rememberOutOfCredits().catch(() => undefined);
+	const alternative = ALTERNATIVES[provider] ?? "";
+	return new AppError(
+		422,
+		`${provider} error: ElevenLabs, the vendor Retween uses for this, has run out of credits on Retween's side (${error.message}). ` +
+			`This is not a problem with your account or your cost controls, and retrying will not help until it is topped up. ${alternative}`.trim(),
+		"vendor_out_of_credits",
+		{ provider, upstreamStatus: (error.details as { upstreamStatus?: number } | undefined)?.upstreamStatus },
+	);
+}
+
+const outOfCreditsRequest = () => new Request(new URL(OUT_OF_CREDITS_KEY, env.APP_URL));
+
+async function rememberOutOfCredits(): Promise<void> {
+	const cache = await caches.open("retween:vendors");
+	await cache.put(outOfCreditsRequest(), new Response(String(Date.now()), { headers: { "cache-control": `public, max-age=${OUT_OF_CREDITS_SECONDS}` } }));
+}
+
+/**
+ * Whether ElevenLabs can take paid work right now, as far as Retween can tell without spending anything:
+ * a recent "out of credits" answer, or the subscription's remaining credits (when the API key may read them).
+ * Returns a problem to report, or null when nothing is known to be wrong.
+ */
+export async function elevenLabsCreditProblem(): Promise<string | null> {
+	const cache = await caches.open("retween:vendors").catch(() => undefined);
+	if (await cache?.match(outOfCreditsRequest()).catch(() => undefined)) {
+		return "ElevenLabs (music, its voices and sound effects) ran out of credits on Retween's side in the last few minutes, so those requests would fail.";
+	}
+	const key = new Request(new URL("/__cache/elevenlabs-subscription", env.APP_URL));
+	let remaining: number | null = null;
+	const kept = await cache?.match(key).catch(() => undefined);
+	if (kept) {
+		remaining = ((await kept.json()) as { remaining: number | null }).remaining;
+	} else {
+		try {
+			const response = await fetch(`${BASE}/v1/user/subscription`, { headers: headers(), signal: AbortSignal.timeout(3000) });
+			if (response.ok) {
+				const json = (await response.json()) as { character_count?: number; character_limit?: number };
+				if (typeof json.character_count === "number" && typeof json.character_limit === "number") remaining = json.character_limit - json.character_count;
+			}
+		} catch {
+			// Unknown: say nothing.
+		}
+		await cache?.put(key, Response.json({ remaining }, { headers: { "cache-control": "public, max-age=300" } })).catch(() => undefined);
+	}
+	return remaining !== null && remaining <= 0
+		? "ElevenLabs (music, its voices and sound effects) has no credits left on Retween's side, so those requests would fail."
+		: null;
 }
 
 /** What ElevenLabs says about a request's billing, from its response headers. */

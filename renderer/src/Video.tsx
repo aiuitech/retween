@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AbsoluteFill, Img, Sequence, useCurrentFrame, useDelayRender } from "remotion";
 import { AudioLayer } from "./components/AudioLayer.tsx";
 import { Captions } from "./components/Captions.tsx";
-import { Scene } from "./components/Scene.tsx";
+import { Scene, sceneIsDark } from "./components/Scene.tsx";
 import { mediaOk, type RenderContext, RenderProvider, useRender } from "./context.ts";
 import { collectText, fontStack, loadFaces, loadFallback } from "./lib/fonts.ts";
 import { captionLayout, frameLayout, watermarkBox } from "./lib/layout.ts";
@@ -189,25 +189,47 @@ const SceneLayer: React.FC<{ scene: TimelineScene; tail: number; next?: Timeline
 	);
 };
 
+/**
+ * The brand mark in its corner. With a dark-background version, each scene shows the one that reads on it,
+ * crossfading over the scene's entrance transition.
+ */
 const Watermark: React.FC = () => {
-	const { theme, watermark } = useRender();
+	const { theme, watermark, timeline, resolved } = useRender();
+	const f = useCurrentFrame();
 	const wm = theme.watermark;
 	if (!wm || !watermark) return null;
 	const { rect } = watermark;
 	const left = wm.position.endsWith("left");
+	const ok = (src: string) => mediaOk(resolved, src);
+	let darkWeight = 0;
+	if (wm.darkSrc && ok(wm.darkSrc)) {
+		const scenes = timeline.scenes;
+		let index = 0;
+		for (let i = 0; i < scenes.length; i++) if (scenes[i]!.startFrame <= f) index = i;
+		const scene = scenes[index];
+		if (scene) {
+			const dark = sceneIsDark(theme, scene, ok) ? 1 : 0;
+			const previous = scenes[index - 1];
+			const before = previous ? (sceneIsDark(theme, previous, ok) ? 1 : 0) : dark;
+			const T = scene.transition.type === "cut" ? 0 : scene.transition.durationInFrames;
+			const p = T > 0 ? progress(f, scene.startFrame, T) : 1;
+			darkWeight = before + (dark - before) * p;
+		}
+	}
+	const style = (src: string, opacity: number): React.CSSProperties => ({
+		position: "absolute",
+		left: rect.x,
+		top: rect.y,
+		width: rect.w,
+		height: rect.h,
+		objectFit: "contain",
+		objectPosition: `${left ? "left" : "right"} ${wm.position.startsWith("top") ? "top" : "bottom"}`,
+		opacity: wm.opacity * opacity,
+	});
 	return (
-		<Img
-			src={wm.src}
-			style={{
-				position: "absolute",
-				left: rect.x,
-				top: rect.y,
-				width: rect.w,
-				height: rect.h,
-				objectFit: "contain",
-				objectPosition: `${left ? "left" : "right"} ${wm.position.startsWith("top") ? "top" : "bottom"}`,
-				opacity: wm.opacity,
-			}}
-		/>
+		<>
+			{darkWeight < 1 ? <Img src={wm.src} style={style(wm.src, 1 - darkWeight)} /> : null}
+			{darkWeight > 0 && wm.darkSrc ? <Img src={wm.darkSrc} style={style(wm.darkSrc, darkWeight)} /> : null}
+		</>
 	);
 };

@@ -6,6 +6,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { isOpenRouterModel } from "../../../shared/audio-models.ts";
 import { type BrandKit, DEFAULTS, resolvePalette } from "../../../shared/brand.ts";
 import { type ComposeAsset, type ComposeResult, composeTimeline } from "../../../shared/compose.ts";
+import { pronunciationsFor } from "../../../shared/narration.ts";
 import { type Scene, type Storyboard, storyboardIcons } from "../../../shared/storyboard.ts";
 import type { AspectRatio } from "../../../shared/timeline.ts";
 import type { Actor } from "../auth/index.ts";
@@ -52,7 +53,7 @@ function referencedAssetIds(storyboard: Storyboard, resolved: ResolvedMedia, bra
 		for (const effect of scene.sfx ?? []) ids.add(effect.assetId);
 		for (const assetId of Object.values(scene.custom?.assets ?? {})) ids.add(assetId);
 	}
-	for (const group of [resolved.narration, resolved.visual, resolved.sfx, resolved.icons ?? {}, resolved.cutout ?? {}]) {
+	for (const group of [resolved.narration, resolved.visual, resolved.sfx, resolved.icons ?? {}, resolved.cutout ?? {}, resolved.firstFrame ?? {}]) {
 		for (const entry of Object.values(group)) ids.add(entry.assetId);
 	}
 	ids.add(resolved.music?.assetId);
@@ -63,6 +64,7 @@ function referencedAssetIds(storyboard: Storyboard, resolved: ResolvedMedia, bra
 	ids.add(brand.visual?.logo?.assetId);
 	ids.add(brand.visual?.logo?.darkAssetId);
 	ids.add(brand.format?.watermark?.assetId);
+	ids.add(brand.format?.watermark?.darkAssetId);
 	return [...ids].filter((id): id is string => Boolean(id));
 }
 
@@ -70,6 +72,7 @@ const toComposeAsset = (asset: Asset): ComposeAsset => ({
 	id: asset.id,
 	kind: asset.kind,
 	ready: asset.status === "ready",
+	failed: asset.status === "failed",
 	durationSec: asset.durationMs != null ? asset.durationMs / 1000 : undefined,
 	words: asset.meta.words,
 	contentType: asset.contentType ?? undefined,
@@ -145,30 +148,47 @@ export interface MediaPlan {
 	problems: string[];
 }
 
+/** Whether a scene uses the brand's style lock (visual.brandStyle: false opts one scene out). */
+export interface StyleOptions {
+	brandStyle?: boolean;
+}
+
+const castDescriptions = (brand: BrandKit, castIds: string[] = []) =>
+	(brand.cast ?? []).filter((member) => castIds.includes(member.id)).map((member) => `${member.name}: ${member.description}`);
+
 /** Brand style lock + cast descriptions wrapped around a scene's own image prompt. */
-export function styledImagePrompt(brand: BrandKit, prompt: string, castIds: string[] = []): string {
-	const parts = [prompt.trim()];
-	const cast = (brand.cast ?? []).filter((member) => castIds.includes(member.id));
-	for (const member of cast) parts.push(`${member.name}: ${member.description}`);
-	const style = brand.visual?.imageStyle;
+export function styledImagePrompt(brand: BrandKit, prompt: string, castIds: string[] = [], options: StyleOptions = {}): string {
+	const parts = [prompt.trim(), ...castDescriptions(brand, castIds)];
+	const style = options.brandStyle === false ? undefined : brand.visual?.imageStyle;
 	if (style?.prompt) parts.push(`Style: ${style.prompt}`);
 	if (style?.avoid) parts.push(`Avoid: ${style.avoid}`);
 	return parts.join("\n\n");
 }
 
 /** A vector prompt: the scene's own words plus the brand's style lock (but not its photographic "avoid" list). */
-export function styledVectorPrompt(brand: BrandKit, prompt: string, castIds: string[] = []): string {
-	const parts = [prompt.trim(), "Flat vector illustration, clean shapes, no text."];
-	const cast = (brand.cast ?? []).filter((member) => castIds.includes(member.id));
-	for (const member of cast) parts.push(`${member.name}: ${member.description}`);
-	if (brand.visual?.imageStyle?.avoid) parts.push(`Avoid: ${brand.visual.imageStyle.avoid}`);
+export function styledVectorPrompt(brand: BrandKit, prompt: string, castIds: string[] = [], options: StyleOptions = {}): string {
+	const parts = [prompt.trim(), "Flat vector illustration, clean shapes, no text.", ...castDescriptions(brand, castIds)];
+	if (options.brandStyle !== false && brand.visual?.imageStyle?.avoid) parts.push(`Avoid: ${brand.visual.imageStyle.avoid}`);
 	return parts.join("\n\n");
 }
 
-export function imageReferenceIds(brand: BrandKit, castIds: string[] = [], extra: string[] = []): string[] {
-	const cast = (brand.cast ?? []).filter((member) => castIds.includes(member.id)).flatMap((member) => member.referenceAssetIds ?? []);
-	return [...new Set([...extra, ...cast, ...(brand.visual?.imageStyle?.referenceAssetIds ?? [])])].slice(0, 12);
+/** A clip prompt: the scene's own words, the cast who appear and the brand's clip style. */
+export function styledClipPrompt(brand: BrandKit, prompt: string, castIds: string[] = [], options: StyleOptions = {}): string {
+	const parts = [prompt.trim(), ...castDescriptions(brand, castIds)];
+	const style = options.brandStyle === false ? undefined : brand.visual?.videoStyle?.prompt;
+	if (style) parts.push(`Style: ${style}`);
+	return parts.join("\n\n");
 }
+
+export function imageReferenceIds(brand: BrandKit, castIds: string[] = [], extra: string[] = [], options: StyleOptions = {}): string[] {
+	const cast = (brand.cast ?? []).filter((member) => castIds.includes(member.id)).flatMap((member) => member.referenceAssetIds ?? []);
+	const style = options.brandStyle === false ? [] : (brand.visual?.imageStyle?.referenceAssetIds ?? []);
+	return [...new Set([...extra, ...cast, ...style])].slice(0, 12);
+}
+
+/** Reference images of the cast members a scene names (what keeps a clip on-model). */
+const castReferenceIds = (brand: BrandKit, castIds: string[] = []) =>
+	(brand.cast ?? []).filter((member) => castIds.includes(member.id)).flatMap((member) => member.referenceAssetIds ?? []);
 
 export function narrationSpec(brand: BrandKit, text: string, override: Scene["voice"] = {}): Extract<GenerationSpec, { type: "speech" }> {
 	const voice = brand.narration ?? {};
@@ -178,7 +198,8 @@ export function narrationSpec(brand: BrandKit, text: string, override: Scene["vo
 	return {
 		type: "speech",
 		text,
-		pronunciations: voice.pronunciations ?? [],
+		// Only the respellings this line uses, so adding one re-voices just the lines that say the word.
+		pronunciations: pronunciationsFor(text, voice.pronunciations),
 		voiceId: override?.voiceId ?? voice.voiceId ?? DEFAULTS.voiceId,
 		modelId,
 		language: voice.language,
@@ -264,6 +285,13 @@ export async function planMedia(
 	const base = { projectId: project.id, videoId: video.id, createdBy: userId, source: "generated" as const };
 	const sceneName = (scene: Scene) => scene.label ?? scene.id;
 	const limited = <T extends GenerationSpec>(spec: T) => limitSpec(controls, spec);
+	/** Forgets a clip's generated first frame once the scene no longer needs it. */
+	const dropFirstFrame = (sceneId: string) => {
+		const entry = resolved.firstFrame?.[sceneId];
+		if (!entry) return;
+		if (existing.get(entry.assetId)?.tags.includes("auto")) superseded.push(entry.assetId);
+		delete resolved.firstFrame![sceneId];
+	};
 	const withhold = (scene: Scene, reason: string) => {
 		delete resolved.visual[scene.id];
 		resolved.withheld![`visual:${scene.id}`] = reason;
@@ -339,7 +367,14 @@ export async function planMedia(
 			// Narration
 			if (scene.narration?.trim()) {
 				const spec = narrationSpec(brand, scene.narration.trim(), scene.voice);
-				const entry = await ensure(resolved.narration[scene.id], await hashOf(spec), Boolean(regenerate.narration && inScope(scene.id)), { kind: "narration", sceneId: scene.id, units: scene.narration.trim().length }, () =>
+				const hash = await hashOf(spec);
+				// Takes made before only the line's own respellings were keyed carry the hash of the whole list:
+				// the same take, so it is re-keyed rather than voiced again.
+				const current = resolved.narration[scene.id];
+				if (current && current.hash !== hash && (brand.narration?.pronunciations ?? []).length !== spec.pronunciations.length) {
+					if (current.hash === (await hashOf({ ...spec, pronunciations: brand.narration?.pronunciations ?? [] }))) current.hash = hash;
+				}
+				const entry = await ensure(resolved.narration[scene.id], hash, Boolean(regenerate.narration && inScope(scene.id)), { kind: "narration", sceneId: scene.id, units: scene.narration.trim().length }, () =>
 					createAsset({
 						...base,
 						kind: "audio",
@@ -383,6 +418,7 @@ export async function planMedia(
 		const forceVisual = Boolean(regenerate.visuals && inScope(scene.id));
 		// Re-decided below for whichever phase produces this scene's visual (clips: phase 2, the rest: phase 1).
 		if (phase === 1 && visual?.source !== "video") delete resolved.withheld![`visual:${scene.id}`];
+		if (phase === 1 && visual?.source !== "video") dropFirstFrame(scene.id);
 
 		// Subject cut-out, made once the scene's picture exists.
 		if (phase === 1 && !visual?.cutout) delete resolved.cutout![scene.id];
@@ -434,7 +470,7 @@ export async function planMedia(
 				const palette = resolvePalette(brand.visual?.palette);
 				const spec: GenerationSpec = {
 					type: "vector",
-					prompt: styledVectorPrompt(brand, visual.prompt!, visual.cast),
+					prompt: styledVectorPrompt(brand, visual.prompt!, visual.cast, visual),
 					aspectRatio: video.aspect,
 					colors: [palette.primary, palette.secondary, palette.accent, palette.surface],
 					background: palette.background,
@@ -466,10 +502,10 @@ export async function planMedia(
 		if (visual.source === "image" && phase === 1) {
 			const spec: GenerationSpec = {
 				type: "image",
-				prompt: styledImagePrompt(brand, visual.prompt!, visual.cast),
+				prompt: styledImagePrompt(brand, visual.prompt!, visual.cast, visual),
 				aspectRatio: video.aspect,
 				quality: brand.visual?.imageStyle?.quality ?? "max",
-				referenceAssetIds: imageReferenceIds(brand, visual.cast, visual.referenceAssetIds),
+				referenceAssetIds: imageReferenceIds(brand, visual.cast, visual.referenceAssetIds, visual),
 			};
 			const blocked = blockedReason(controls, "image");
 			delete resolved.withheld![`visual:${scene.id}`];
@@ -526,14 +562,15 @@ export async function planMedia(
 			const narration = existing.get(resolved.narration[scene.id]?.assetId ?? "");
 			const spokenSec = narration?.durationMs ? narration.durationMs / 1000 : 0;
 			const seconds = visual.seconds ?? clamp(Math.ceil(scene.timing?.seconds ?? (spokenSec ? spokenSec + 0.7 : 5)), 3, 15);
-			const style = brand.visual?.videoStyle?.prompt;
+			// An on-model still made in phase 1 from the cast's reference images, when the scene did not give one.
+			const madeFrame = visual.firstFrameAssetId ? undefined : existing.get(resolved.firstFrame?.[scene.id]?.assetId ?? "");
 			const spec: GenerationSpec = {
 				type: "video",
-				prompt: style ? `${visual.prompt!.trim()}\n\nStyle: ${style}` : visual.prompt!.trim(),
+				prompt: styledClipPrompt(brand, visual.prompt!, visual.cast, visual),
 				seconds,
 				aspectRatio: clipAspect(video.aspect),
 				resolution: "720p",
-				firstFrameAssetId: visual.firstFrameAssetId,
+				firstFrameAssetId: visual.firstFrameAssetId ?? (madeFrame?.status === "ready" ? madeFrame.id : undefined),
 				withAudio: (visual.volume ?? 0) > 0,
 			};
 			// Length follows the narration, so it is left out of the key: a reworded line does not buy a new clip.
@@ -561,9 +598,8 @@ export async function planMedia(
 			if (entry) resolved.visual[scene.id] = entry;
 			else if (blocked) {
 				// A cheaper stand-in: the clip's own first frame, else a generated still of the same shot.
-				const firstFrame = visual.firstFrameAssetId
-					? (existing.get(visual.firstFrameAssetId) ?? (await assetsById(project.id, [visual.firstFrameAssetId])).get(visual.firstFrameAssetId))
-					: undefined;
+				const firstFrameId = spec.firstFrameAssetId;
+				const firstFrame = firstFrameId ? (existing.get(firstFrameId) ?? (await assetsById(project.id, [firstFrameId])).get(firstFrameId)) : undefined;
 				const stillBlocked = blockedReason(controls, "image");
 				if (firstFrame?.status === "ready" && firstFrame.kind === "image") {
 					resolved.visual[scene.id] = { assetId: firstFrame.id, hash: await hashOf({ firstFrame: firstFrame.id }) };
@@ -571,10 +607,10 @@ export async function planMedia(
 				} else if (!stillBlocked) {
 					const still: GenerationSpec = {
 						type: "image",
-						prompt: styledImagePrompt(brand, visual.prompt!, visual.cast),
+						prompt: styledImagePrompt(brand, visual.prompt!, visual.cast, visual),
 						aspectRatio: video.aspect,
 						quality: brand.visual?.imageStyle?.quality ?? "max",
-						referenceAssetIds: imageReferenceIds(brand, visual.cast),
+						referenceAssetIds: imageReferenceIds(brand, visual.cast, [], visual),
 					};
 					const stand = await ensure(resolved.visual[scene.id], await hashOf(still), forceVisual, { kind: "image", sceneId: scene.id }, () =>
 						createAsset({
@@ -595,6 +631,42 @@ export async function planMedia(
 		} else if (visual.source === "video" && phase === 1) {
 			const current = existing.get(resolved.visual[scene.id]?.assetId ?? "");
 			if (current?.status === "pending") plan.pending.push(current.id);
+
+			// Clips drift off-model where stills do not, because only stills see the cast's reference images. So a
+			// clip naming cast members with references starts from a still made from them, and animates that.
+			const references = castReferenceIds(brand, visual.cast);
+			if (visual.firstFrameAssetId || !references.length) {
+				dropFirstFrame(scene.id);
+			} else {
+				resolved.firstFrame ??= {};
+				const still: GenerationSpec = {
+					type: "image",
+					prompt: styledImagePrompt(brand, `The opening frame of a video shot: ${visual.prompt!.trim()}`, visual.cast, visual),
+					aspectRatio: clipAspect(video.aspect),
+					quality: brand.visual?.imageStyle?.quality ?? "max",
+					referenceAssetIds: imageReferenceIds(brand, visual.cast, [], visual),
+				};
+				// Also the stand-in still when clips are switched off, so it is made even then.
+				const blocked = blockedReason(controls, "image");
+				const entry = await ensure(
+					resolved.firstFrame[scene.id],
+					await hashOf(still),
+					forceVisual,
+					{ kind: "image", sceneId: scene.id },
+					() =>
+						createAsset({
+							...base,
+							kind: "image",
+							name: `First frame · ${video.title} · ${sceneName(scene)}`,
+							tags: ["auto", "scene", "first-frame"],
+							meta: { prompt: visual.prompt },
+							generation: limited(still),
+						}),
+					blocked,
+				);
+				if (entry) resolved.firstFrame[scene.id] = entry;
+				else delete resolved.firstFrame[scene.id];
+			}
 		}
 	}
 
@@ -606,6 +678,7 @@ export async function planMedia(
 		}
 		for (const key of Object.keys(resolved.sfx)) if (!sceneIds.has(key.split(":")[0]!)) delete resolved.sfx[key];
 		for (const key of Object.keys(resolved.cutout!)) if (!sceneIds.has(key)) delete resolved.cutout![key];
+		for (const key of Object.keys(resolved.firstFrame ?? {})) if (!sceneIds.has(key)) delete resolved.firstFrame![key];
 		for (const key of Object.keys(resolved.withheld!)) if (!sceneIds.has(key.split(":")[1]!)) delete resolved.withheld![key];
 	}
 
@@ -614,6 +687,9 @@ export async function planMedia(
 		const music = video.storyboard.music;
 		const prompt = music?.prompt ?? (music?.assetId || brand.audio?.musicAssetId ? undefined : brand.audio?.musicPrompt);
 		if (music?.enabled === false || music?.assetId || !prompt) {
+			// A generated bed that failed is not kept around once the video stops asking for one.
+			const previous = existing.get(resolved.music?.assetId ?? "");
+			if (previous?.status === "failed" && previous.tags.includes("auto")) superseded.push(previous.id);
 			delete resolved.music;
 		} else {
 			const draft = composeTimeline({
@@ -700,6 +776,7 @@ export async function mediaStatus(video: Video, project: Project) {
 			id: scene.id,
 			narration: scene.narration ? (describe(video.resolved.narration[scene.id]?.assetId) ?? { status: "missing" }) : undefined,
 			cutout: scene.visual?.cutout ? (describe(video.resolved.cutout?.[scene.id]?.assetId) ?? { status: "missing" }) : undefined,
+			firstFrame: describe(video.resolved.firstFrame?.[scene.id]?.assetId),
 			visual:
 				scene.visual && ["image", "vector", "video", "stock"].includes(scene.visual.source)
 					? (describe(video.resolved.visual[scene.id]?.assetId) ?? { status: "missing" })
@@ -728,6 +805,7 @@ function mediaSummary(media: Awaited<ReturnType<typeof mediaStatus>>) {
 		note("narration", scene.narration, scene.id);
 		note("visual", scene.visual, scene.id);
 		note("cutout", scene.cutout, scene.id);
+		note("first frame", scene.firstFrame, scene.id);
 	}
 	for (const [name, entry] of Object.entries(media.icons)) note(`icon ${name}`, entry);
 	note("music", media.music);

@@ -116,6 +116,25 @@ export const BrandVisual = z
 				darkAssetId: assetId.describe("Logo for dark backgrounds"),
 			})
 			.partial(),
+		accentText: z
+			.boolean()
+			.describe(
+				"Whether words may be set in the accent colour (kickers, bullet numbers, stat prefix and suffix). Default true; false keeps every word in the text colours and leaves the accent to rules, bars and icons",
+			),
+		backdrop: z
+			.object({
+				style: z
+					.enum(["shapes", "rings", "plain"])
+					.describe("shapes: two soft discs with hairline rings (default). rings: the rings only. plain: the flat background colour"),
+				colors: z
+					.array(hexColor)
+					.min(1)
+					.max(3)
+					.describe("Colours of the shapes (default the palette's primary and secondary). The rings use the text colour"),
+				intensity: z.number().min(0).max(1).describe("How strongly the shapes show against the background, 0–1 (default 0.25: a quiet tint)"),
+			})
+			.partial()
+			.describe('The animated backdrop drawn behind scenes whose visual is source "brand" (and behind text-only scenes)'),
 		cornerRadius: z.number().min(0).max(120).describe("Corner radius in px at 1080p"),
 		scrim: z.number().min(0).max(1).describe("How much footage is darkened behind text (0–1)"),
 		imageStyle: z
@@ -198,7 +217,10 @@ export const BrandFormat = z
 		watermark: z
 			.object({
 				enabled: z.boolean(),
-				assetId,
+				assetId: assetId.describe("The mark, for light backgrounds. Defaults to the logo"),
+				darkAssetId: assetId.describe(
+					"The mark for dark backgrounds, swapped in scene by scene. Defaults to the logo's dark version when the mark is the logo",
+				),
 				position: z.enum(["top-left", "top-right", "bottom-left", "bottom-right"]),
 				opacity: z.number().min(0).max(1),
 				scale: z.number().min(0.02).max(0.5),
@@ -261,6 +283,9 @@ export const DEFAULT_PALETTE = {
 	text: "#F5F3EE",
 	mutedText: "#A8A49B",
 };
+
+/** How strongly the brand backdrop's shapes show by default (see BrandBackdrop in the renderer). */
+export const DEFAULT_BACKDROP_INTENSITY = 0.25;
 
 export const DEFAULTS = {
 	fps: 30 as const,
@@ -327,7 +352,15 @@ export function resolveTheme(brand: BrandKit, assetSrc: (assetId: string) => str
 	const logoSrc = brand.visual?.logo?.assetId ? assetSrc(brand.visual.logo.assetId) : undefined;
 	const darkLogoSrc = brand.visual?.logo?.darkAssetId ? assetSrc(brand.visual.logo.darkAssetId) : undefined;
 	const mark = brand.format?.watermark;
-	const markSrc = mark?.enabled !== false && mark?.assetId ? assetSrc(mark.assetId) : undefined;
+	// The mark follows the logo's light/dark pair when it is the logo (or names none but is switched on).
+	const logo = brand.visual?.logo;
+	const markId = mark?.assetId ?? (mark?.enabled === true ? (logo?.assetId ?? logo?.darkAssetId) : undefined);
+	const isLogo = !!markId && (markId === logo?.assetId || markId === logo?.darkAssetId);
+	const lightMarkId = isLogo ? (logo?.assetId ?? markId) : markId;
+	const darkMarkId = mark?.darkAssetId ?? (isLogo ? logo?.darkAssetId : undefined);
+	const markSrc = mark?.enabled !== false && lightMarkId ? (assetSrc(lightMarkId) ?? (darkMarkId ? assetSrc(darkMarkId) : undefined)) : undefined;
+	const darkMarkSrc = markSrc && darkMarkId ? assetSrc(darkMarkId) : undefined;
+	const backdrop = brand.visual?.backdrop;
 	return {
 		colors: palette,
 		fonts: {
@@ -350,9 +383,16 @@ export function resolveTheme(brand: BrandKit, assetSrc: (assetId: string) => str
 		},
 		scrim: brand.visual?.scrim ?? 0.45,
 		logo: logoSrc || darkLogoSrc ? { src: (logoSrc ?? darkLogoSrc)!, darkSrc: darkLogoSrc } : undefined,
+		backdrop: {
+			style: backdrop?.style ?? "shapes",
+			colors: backdrop?.colors?.length ? backdrop.colors : [palette.primary, palette.secondary],
+			intensity: backdrop?.intensity ?? DEFAULT_BACKDROP_INTENSITY,
+		},
+		...(brand.visual?.accentText === false ? { accentText: false } : {}),
 		watermark: markSrc
 			? {
 					src: markSrc,
+					...(darkMarkSrc && darkMarkSrc !== markSrc ? { darkSrc: darkMarkSrc } : {}),
 					position: mark?.position ?? "top-right",
 					opacity: mark?.opacity ?? 0.7,
 					scale: mark?.scale ?? 0.1,

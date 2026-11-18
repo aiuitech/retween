@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { compareRead, numberWords, tokens } from "./listen.ts";
+import { compareRead, numberWords, soundKey, tokens } from "./listen.ts";
 import type { SpokenWord } from "./narration.ts";
 
 /** Words at 0.3s each, as a transcriber would return them. */
@@ -11,7 +11,7 @@ test("numbers read either way match", () => {
 	assert.equal(numberWords(1200), "one thousand two hundred");
 	assert.deepEqual(
 		tokens("It costs 1,200 dollars.").map((token) => token.key),
-		["it", "costs", "one", "thousand", "two", "hundred", "dollars"],
+		["it", "costs", "1200", "dollar"],
 	);
 	const result = compareRead("Delivered in 72 hours.", heard("Delivered in seventy-two hours."));
 	assert.equal(result.differences.length, 0);
@@ -58,4 +58,64 @@ test("nothing heard at all is one big difference", () => {
 	const result = compareRead("This should have been said.", []);
 	assert.equal(result.matched, 0);
 	assert.equal(result.differences[0]!.kind, "missing");
+});
+
+test("numbers are compared by value, however they are written or split", () => {
+	const keys = (text: string) => tokens(text).map((token) => token.key);
+	assert.deepEqual(keys("$7,200."), ["7200", "dollar"]);
+	assert.deepEqual(keys("seven thousand two hundred dollars"), ["7200", "dollar"]);
+	assert.deepEqual(keys("seventy-two hundred bucks"), ["7200", "dollar"]);
+	assert.deepEqual(keys("a five-thousand-dollar job"), ["a", "5000", "dollar", "job"]);
+	assert.deepEqual(keys("$5k"), ["5000", "dollar"]);
+	assert.deepEqual(keys("3.5 million"), ["3500000"]);
+	assert.deepEqual(keys("three point five million"), ["3500000"]);
+	assert.deepEqual(keys("one hundred and five"), ["105"]);
+	assert.deepEqual(keys("the 21st and the twenty-first"), ["the", "21th", "and", "the", "21th"]);
+	assert.deepEqual(keys("40% off"), ["40", "percent", "off"]);
+	assert.deepEqual(keys("twenty twenty-six"), ["20", "26"]);
+});
+
+test("a price read aloud and transcribed in digits is not a misread", () => {
+	// The transcriber split "$7,200" into two words.
+	const split: SpokenWord[] = [
+		["It", 0, 0.2],
+		["costs", 0.2, 0.5],
+		["$7", 0.5, 0.9],
+		[",200", 0.9, 1.4],
+		["a", 1.4, 1.5],
+		["month.", 1.5, 1.9],
+	];
+	assert.deepEqual(compareRead("It costs seven thousand two hundred dollars a month.", split).differences, []);
+	assert.deepEqual(compareRead("It costs $7,200 a month.", heard("It costs seven thousand two hundred dollars a month.")).differences, []);
+	assert.deepEqual(compareRead("Skip the five-thousand-dollar agency.", heard("Skip the $5,000 agency.")).differences, []);
+	assert.deepEqual(
+		compareRead("Skip the five-thousand-dollar agency.", [
+			["Skip", 0, 0.3],
+			["the", 0.3, 0.4],
+			["$5", 0.4, 0.7],
+			[",000", 0.7, 1],
+			["agency.", 1, 1.5],
+		]).differences,
+		[],
+	);
+	assert.deepEqual(compareRead("Up 40% this year.", heard("Up forty percent this year.")).differences, []);
+	assert.deepEqual(compareRead("Founded in 2026.", heard("Founded in twenty twenty six.")).differences, []);
+});
+
+test("a price said wrong is reported", () => {
+	const result = compareRead("It costs $7,200 a month.", heard("It costs $7,000 a month."));
+	assert.equal(result.differences.length, 1);
+	assert.equal(result.differences[0]!.kind, "different");
+	assert.equal(result.differences[0]!.expected, "$7,200");
+	assert.ok(result.differences[0]!.weight >= 2);
+});
+
+test("homophones are not misreads, but a different vowel in a name is", () => {
+	assert.equal(soundKey("waits"), soundKey("weights"));
+	assert.equal(soundKey("rite"), soundKey("right"));
+	assert.notEqual(soundKey("Dana"), soundKey("Donna"));
+	assert.deepEqual(compareRead("Nothing waits on you.", heard("Nothing weights on you.")).differences, []);
+	const result = compareRead("Ask Dana for a quote.", heard("Ask Donna for a quote."));
+	assert.equal(result.differences.length, 1);
+	assert.equal(result.differences[0]!.heard, "donna");
 });

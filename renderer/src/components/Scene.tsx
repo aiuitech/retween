@@ -21,12 +21,36 @@ type Palette = {
 	rule: string;
 	/** Kicker text: the accent on flat colour, white over footage (where the accent cannot be trusted to read). */
 	kicker: string;
+	/** Small words that would be set in the accent (bullet numbers, stat prefix and suffix): the accent, unless the brand keeps it off text. */
+	ink: string;
 	/** The colour text effectively sits on. */
 	base: string;
 	dark: boolean;
 };
 
 function paletteFor(theme: TimelineTheme, scene: TimelineScene, overMedia: boolean): Palette {
+	const pal = basePalette(theme, scene, overMedia);
+	const own = scene.content.color;
+	// The scene's own text colour, when it asks for one (a warning in red), is used as given.
+	const text = own ?? pal.text;
+	const muted = own ? withAlpha(own, 0.8) : pal.muted;
+	const accentText = theme.accentText !== false;
+	return {
+		...pal,
+		text,
+		muted,
+		kicker: accentText || overMedia ? pal.kicker : text,
+		ink: own ?? (accentText ? pal.accent : text),
+	};
+}
+
+/** True when the scene's text sits on something dark (footage under a scrim counts as dark). */
+export function sceneIsDark(theme: TimelineTheme, scene: TimelineScene, ok: (src: string) => boolean): boolean {
+	const overMedia = scene.type !== "split" && !(scene.type === "map" && !!scene.content.map) && hasMedia(scene.background, ok);
+	return basePalette(theme, scene, overMedia).dark;
+}
+
+function basePalette(theme: TimelineTheme, scene: TimelineScene, overMedia: boolean): Omit<Palette, "ink"> {
 	const c = theme.colors;
 	if (overMedia) {
 		const base = "#101014";
@@ -353,18 +377,18 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 								{bullet.icon && ok(bullet.icon.src) ? (
 									// An icon has no text baseline: its bottom edge is used, so a negative margin drops it to sit like a glyph.
 									<Reveal start={bullet.atFrame} anim="fade" style={{ flex: "none", width: U(numberWidth), marginBottom: U(-size.bullet * 0.17) }}>
-										<Icon icon={bullet.icon} size={U(size.bullet * 0.95)} color={pal.accent} />
+										<Icon icon={bullet.icon} size={U(size.bullet * 0.95)} color={bullet.color ?? pal.accent} />
 									</Reveal>
 								) : (
 									<Reveal
 										start={bullet.atFrame}
 										anim="fade"
-										style={{ ...bodyFont, flex: "none", width: U(numberWidth), fontWeight: strong, fontSize: S(size.bullet * 0.5), letterSpacing: "0.1em", color: pal.accent, fontVariantNumeric: "tabular-nums" }}
+										style={{ ...bodyFont, flex: "none", width: U(numberWidth), fontWeight: strong, fontSize: S(size.bullet * 0.5), letterSpacing: "0.1em", color: bullet.color ?? pal.ink, fontVariantNumeric: "tabular-nums" }}
 									>
 										{String(i + 1).padStart(2, "0")}
 									</Reveal>
 								)}
-								<div data-block style={{ ...bodyFont, flex: 1, minWidth: 0, fontSize: U(size.bullet), lineHeight: 1.24, letterSpacing: "-0.008em", color: pal.text, textWrap: "pretty" }}>
+								<div data-block style={{ ...bodyFont, flex: 1, minWidth: 0, fontSize: U(size.bullet), lineHeight: 1.24, letterSpacing: "-0.008em", color: bullet.color ?? pal.text, textWrap: "pretty" }}>
 									<SplitText text={bullet.text} start={bullet.atFrame} caretColor={pal.accent} />
 								</div>
 							</div>
@@ -423,7 +447,7 @@ export const Scene: React.FC<{ scene: TimelineScene; tail: number; captioned: bo
 		const eased = p >= 1 ? 1 : 1 - 2 ** (-10 * p);
 		const final = counting ? formatCount(s, s.numeric!) : s.value;
 		const current = counting ? formatCount(s, s.numeric! * eased) : s.value;
-		const affix: React.CSSProperties = { fontSize: "0.42em", color: pal.accent, letterSpacing: "-0.01em" };
+		const affix: React.CSSProperties = { fontSize: "0.42em", color: pal.ink, letterSpacing: "-0.01em" };
 		push(
 			"stat",
 			gap,

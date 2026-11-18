@@ -5,6 +5,7 @@
 import { WorkflowEntrypoint, type WorkflowEvent, type WorkflowStep } from "cloudflare:workers";
 import { NonRetryableError } from "cloudflare:workflows";
 import { eq } from "drizzle-orm";
+import { clipPromptForModel } from "../../../shared/prompts.ts";
 import { db, schema } from "../db/client.ts";
 import { failureMessage, isRetryable } from "../lib/util.ts";
 import { VIDEO_MODEL, downloadVideo, getVideoJob, submitVideo } from "../providers/openrouter.ts";
@@ -50,7 +51,8 @@ export class AssetWorkflow extends WorkflowEntrypoint<Env, { assetId: string }> 
 						? (await assetsById(asset.projectId, [spec.firstFrameAssetId])).get(spec.firstFrameAssetId)
 						: undefined;
 					const job = await submitVideo({
-						prompt: spec.prompt,
+						// Worded for the model here rather than in the spec, so clips made before keep their keys.
+						prompt: clipPromptForModel(spec.prompt),
 						seconds: spec.seconds,
 						aspectRatio: spec.aspectRatio,
 						resolution: spec.resolution,

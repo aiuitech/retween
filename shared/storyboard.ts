@@ -11,6 +11,7 @@ import { BrandCaptions } from "./brand.ts";
 import { SCENE_TYPES, TRANSITIONS, TimelineLook } from "./timeline.ts";
 
 const short = z.string().max(300);
+const hexColor = z.string().regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "Use a hex colour such as #D93025");
 
 /** An Iconify icon: `prefix:name`, or a bare name from the brand's icon set. */
 export const ICON_NAME = /^(?:[a-z0-9]+(?:-[a-z0-9]+)*:)?[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -64,8 +65,18 @@ export const SceneVisual = z
 			.array(z.string())
 			.max(6)
 			.optional()
-			.describe("source=image: ids of brand cast members who appear, so their descriptions and reference images are used"),
+			.describe(
+				"source=image|vector|video: ids of brand cast members who appear, so their descriptions (and, for stills, reference images) are used. " +
+					"A clip naming cast members with reference images starts from an on-model still made from them (unless firstFrameAssetId is set), so it stays on-model",
+			),
 		referenceAssetIds: z.array(z.string()).max(8).optional().describe("source=image: extra reference images for this scene"),
+		brandStyle: z
+			.boolean()
+			.optional()
+			.describe(
+				"source=image|vector|video: false leaves out the brand's style lock for this scene (style prompt, avoid list and style reference images; the clip style for video), " +
+					"e.g. for a real-world shot in a brand that otherwise draws illustrations. Cast descriptions and references still apply. Default true",
+			),
 		firstFrameAssetId: z.string().optional().describe("source=video: an image asset to animate from"),
 		seconds: z.number().min(3).max(15).optional().describe("source=video: clip length. Defaults to the scene's narration length"),
 		query: short.optional().describe("source=stock: search terms"),
@@ -119,6 +130,7 @@ export const SceneText = z.object({
 					.optional()
 					.describe("A few words from the narration; the bullet appears as they are spoken. Omit to space bullets evenly"),
 				icon: icon.optional().describe("Shown in place of the bullet number"),
+				color: hexColor.optional().describe("This bullet's words (and its number or icon) in this colour, e.g. a step that is waiting shown in red"),
 			}),
 		)
 		.max(8)
@@ -138,6 +150,9 @@ export const SceneText = z.object({
 	cta: z.object({ text: short, url: short.optional() }).optional(),
 	lowerThird: z.object({ title: short, subtitle: short.optional() }).optional(),
 	showLogo: z.boolean().optional(),
+	color: hexColor
+		.optional()
+		.describe("This scene's words (heading, body, bullets, quote, stat) in this colour instead of the brand text colour. Use sparingly, for meaning such as a warning in red"),
 });
 export type SceneText = z.infer<typeof SceneText>;
 

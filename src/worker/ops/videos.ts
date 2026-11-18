@@ -17,6 +17,8 @@ import { deletePrefix } from "../services/storage.ts";
 import { removeHostedFor } from "../services/hosting.ts";
 import { getControls, limitResolution } from "../services/controls.ts";
 import { assertBudget, projectVideoSpend } from "../services/usage.ts";
+import { estimateCost } from "../services/estimate.ts";
+import type { Actor } from "../auth/index.ts";
 import {
 	type DetailOptions,
 	type RegenerateOptions,
@@ -46,16 +48,23 @@ const detail = {
 };
 const detailOptions = (input: { storyboard: boolean; media: "summary" | "full"; timing: boolean }): DetailOptions => input;
 
-/** In words, what a preparation run will generate (empty when everything is reused). */
-async function preview(videoId: string, userId: string, regenerate: RegenerateOptions) {
-	const [first, second] = await Promise.all([planMedia(videoId, userId, 1, regenerate, { dryRun: true }), planMedia(videoId, userId, 2, regenerate, { dryRun: true })]);
+/** In words, what a preparation run will generate (empty when everything is reused), and what it should cost. */
+async function preview(video: Video, project: Project, actor: Actor, regenerate: RegenerateOptions) {
+	const [first, second, controls] = await Promise.all([
+		planMedia(video.id, actor.id, 1, regenerate, { dryRun: true }),
+		planMedia(video.id, actor.id, 2, regenerate, { dryRun: true }),
+		getControls(actor.id),
+	]);
+	const todo = [...first.todo, ...second.todo];
 	const byKind = new Map<string, string[]>();
-	for (const item of [...first.todo, ...second.todo]) {
+	for (const item of todo) {
 		const list = byKind.get(item.kind) ?? [];
 		list.push(item.sceneId ?? "video");
 		byKind.set(item.kind, list);
 	}
-	return Object.fromEntries([...byKind].map(([kind, scenes]) => [kind, kind === "icon" ? scenes.length : scenes]));
+	const willGenerate = Object.fromEntries([...byKind].map(([kind, scenes]) => [kind, kind === "icon" ? scenes.length : scenes]));
+	const cost = todo.length ? await estimateCost(todo, { brand: project.brand, storyboard: video.storyboard, controls, actor }) : undefined;
+	return { willGenerate, cost };
 }
 const aspect = z.enum(ASPECT_RATIOS);
 const resolution = z.enum(RESOLUTIONS);
@@ -257,6 +266,7 @@ export const videoOps = [
 				...Object.values(video.resolved.visual),
 				...Object.values(video.resolved.sfx),
 				...Object.values(video.resolved.cutout ?? {}),
+				...Object.values(video.resolved.firstFrame ?? {}),
 				...(video.resolved.music ? [video.resolved.music] : []),
 				// Icons are left alone: they are shared by every video in the project.
 			].map((entry) => entry.assetId);
@@ -499,6 +509,7 @@ export const videoOps = [
 				narration: pick(video.resolved.narration, (key) => taken.has(key)),
 				visual: sameShape ? pick(video.resolved.visual, (key) => taken.has(key)) : {},
 				cutout: sameShape ? pick(video.resolved.cutout, (key) => taken.has(key)) : {},
+				firstFrame: sameShape ? pick(video.resolved.firstFrame, (key) => taken.has(key)) : {},
 				sfx: pick(video.resolved.sfx, (key) => taken.has(key.split(":")[0]!)),
 				icons: { ...video.resolved.icons },
 				withheld: pick(video.resolved.withheld, (key) => taken.has(key.split(":")[1] ?? "")),
@@ -528,18 +539,21 @@ export const videoOps = [
 		name: "video.estimate",
 		title: "Estimate a video",
 		description:
-			"Free. The video's expected length scene by scene, and exactly what video.prepare would generate (and so what it would cost): " +
-			"narration, images, vector illustrations, cut-outs, icons, stock lookups, clips and music. Check this before preparing, especially when the storyboard uses generated clips.",
+			"Free. The video's expected length scene by scene, exactly what video.prepare would generate (narration, images, vector illustrations, cut-outs, icons, stock lookups, clips and music), " +
+			"and what that should cost in billed dollars (`cost`: total, a range where vendors price after the fact, per kind, and whether it fits what is left of this month's cap). " +
+			"Check this before preparing, especially when the storyboard uses generated clips or the project sets a spending threshold.",
 		input: z.object({ videoId }),
 		readOnly: true,
 		handler: async (input, { actor }) => {
 			const { video, project } = await getVideo(actor, input.videoId);
-			const [first, second, review] = await Promise.all([
+			const [first, second, review, controls] = await Promise.all([
 				planMedia(video.id, actor.id, 1, {}, { dryRun: true }),
 				planMedia(video.id, actor.id, 2, {}, { dryRun: true }),
 				reviewStoryboard(video, project),
+				getControls(actor.id),
 			]);
 			const todo = [...first.todo, ...second.todo];
+			const cost = await estimateCost(todo, { brand: project.brand, storyboard: video.storyboard, controls, actor });
 			const sum = (kind: string) => todo.filter((item) => item.kind === kind).reduce((total, item) => total + (item.units ?? 0), 0);
 			const count = (kind: string) => todo.filter((item) => item.kind === kind).length;
 			return {
@@ -555,6 +569,7 @@ export const videoOps = [
 					soundEffects: count("sfx"),
 					music: count("music") ? { seconds: sum("music") } : null,
 				},
+				cost,
 				...([...first.problems, ...second.problems].length ? { mediaProblems: [...first.problems, ...second.problems] } : {}),
 				note: todo.length
 					? "Generated clips cost far more than anything else here. Everything else is cheap (icons, charts and maps are free)."
@@ -597,7 +612,8 @@ export const videoOps = [
 			const running = video.status === "preparing" && Date.now() - (video.pipeline.startedAt ?? 0) < 45 * 60_000;
 			// The same request again just follows the run in progress; anything changed (or forced) restarts it.
 			const following = running && video.pipeline.inputHash === inputHash && !Object.keys(regenerate).length;
-			const willGenerate = following ? undefined : await preview(video.id, actor.id, regenerate);
+			const planned = following ? undefined : await preview(video, project, actor, regenerate);
+			const willGenerate = planned?.willGenerate;
 			if (!following) {
 				await assertBudget(actor);
 				await startPipeline(video, actor.id, { regenerate, inputHash });
@@ -609,6 +625,8 @@ export const videoOps = [
 			].filter(Boolean);
 			return {
 				...(willGenerate ? { willGenerate } : { following: "A run with the same storyboard is already going; this follows it." }),
+				...(planned?.cost ? { estimatedCostUsd: planned.cost.totalUsd, ...(planned.cost.rangeUsd ? { estimatedCostRangeUsd: planned.cost.rangeUsd } : {}) } : {}),
+				...(planned?.cost?.vendorProblems ? { vendorProblems: planned.cost.vendorProblems } : {}),
 				video: await videoDetail(current, project, detailOptions(input)),
 				...(notes.length ? { note: notes.join(" ") } : {}),
 			};

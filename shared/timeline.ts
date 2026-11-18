@@ -87,9 +87,24 @@ export const TimelineTheme = z.object({
 	/** How dark the scrim over media is when text sits on top of it (0–1). */
 	scrim: z.number().min(0).max(1),
 	logo: z.object({ src: z.string(), darkSrc: z.string().optional() }).optional(),
+	/**
+	 * The renderer's own backdrop. `colors` are the shapes' colours (from the palette unless the brand
+	 * names them); `intensity` 0–1 is how strongly they show against the background. Absent: the defaults.
+	 */
+	backdrop: z
+		.object({
+			style: z.enum(["shapes", "rings", "plain"]),
+			colors: z.array(color).min(1).max(3),
+			intensity: z.number().min(0).max(1),
+		})
+		.optional(),
+	/** False when the brand never sets words in the accent colour: kickers, numbers and stat affixes then use the text colours. */
+	accentText: z.boolean().optional(),
 	watermark: z
 		.object({
 			src: z.string(),
+			/** The mark used on scenes with a dark background. Absent: `src` everywhere. */
+			darkSrc: z.string().optional(),
 			position: z.enum(["top-left", "top-right", "bottom-left", "bottom-right"]),
 			opacity: z.number().min(0).max(1),
 			/** Width as a fraction of the short side. */
@@ -192,7 +207,7 @@ export const TimelineContent = z.object({
 	subheading: z.string().optional(),
 	body: z.string().optional(),
 	/** `atFrame` is relative to the scene start: the frame the bullet appears on. */
-	bullets: z.array(z.object({ text: z.string(), atFrame: frame, icon: TimelineIcon.optional() })).optional(),
+	bullets: z.array(z.object({ text: z.string(), atFrame: frame, icon: TimelineIcon.optional(), color: color.optional() })).optional(),
 	quote: z.string().optional(),
 	attribution: z.string().optional(),
 	stat: z
@@ -209,6 +224,8 @@ export const TimelineContent = z.object({
 	cta: z.object({ text: z.string(), url: z.string().optional() }).optional(),
 	lowerThird: z.object({ title: z.string(), subtitle: z.string().optional() }).optional(),
 	showLogo: z.boolean().optional(),
+	/** The scene's words in this colour instead of the theme's text colour. */
+	color: color.optional(),
 	chart: TimelineChart.optional(),
 	map: TimelineMap.optional(),
 	/** A layer drawn by the author's own code (see SceneCustom in storyboard.ts). `assets` values are sources like any other. */
@@ -303,6 +320,7 @@ export function collectAssetRefs(timeline: Timeline): string[] {
 	add(timeline.theme.logo?.src);
 	add(timeline.theme.logo?.darkSrc);
 	add(timeline.theme.watermark?.src);
+	add(timeline.theme.watermark?.darkSrc);
 	for (const scene of timeline.scenes) {
 		const bg = scene.background;
 		if (bg.kind === "image" || bg.kind === "video" || bg.kind === "lottie") add(bg.src);
@@ -330,7 +348,7 @@ export function dropMissingAssetRefs(timeline: Timeline, available: (assetId: st
 		theme: {
 			...timeline.theme,
 			logo: logo && ok(logo.src) ? { src: logo.src, darkSrc: logo.darkSrc && ok(logo.darkSrc) ? logo.darkSrc : undefined } : undefined,
-			watermark: watermark && ok(watermark.src) ? watermark : undefined,
+			watermark: watermark && ok(watermark.src) ? { ...watermark, darkSrc: watermark.darkSrc && ok(watermark.darkSrc) ? watermark.darkSrc : undefined } : undefined,
 		},
 		scenes: timeline.scenes.map((scene) => {
 			const bg = scene.background;
@@ -365,7 +383,11 @@ export function resolveAssetRefs(timeline: Timeline, resolve: (assetId: string) 
 				src: swap(timeline.theme.logo.src),
 				darkSrc: timeline.theme.logo.darkSrc && swap(timeline.theme.logo.darkSrc),
 			},
-			watermark: timeline.theme.watermark && { ...timeline.theme.watermark, src: swap(timeline.theme.watermark.src) },
+			watermark: timeline.theme.watermark && {
+				...timeline.theme.watermark,
+				src: swap(timeline.theme.watermark.src),
+				darkSrc: timeline.theme.watermark.darkSrc && swap(timeline.theme.watermark.darkSrc),
+			},
 		},
 		scenes: timeline.scenes.map((scene) => {
 			const bg = scene.background;

@@ -1,29 +1,47 @@
 import type React from "react";
 import { useCurrentFrame } from "remotion";
 import { useRender } from "../context.ts";
-import { isDark, tone, withAlpha } from "../lib/color.ts";
+import { contrast, isDark, mix, withAlpha } from "../lib/color.ts";
 import { seeded } from "../lib/hash.ts";
 
 /**
- * The renderer's own backdrop, built only from theme colours.
+ * The renderer's own backdrop, built only from brand colours.
  *
- * Two flat, overlapping discs in quiet tones of the primary and secondary
- * colours (a print-like composition rather than a gradient) and a set of
- * hairline rings sharing the larger disc's centre. Everything drifts slowly
- * and deterministically; the arrangement is seeded by the scene id so
- * consecutive scenes do not look identical. The accent colour is left out on
- * purpose: it belongs to the type that sits on top.
+ * Two flat, overlapping discs tinted with the backdrop colours (the palette's
+ * primary and secondary unless the brand names its own) - a print-like
+ * composition rather than a gradient - and a set of hairline rings in the text
+ * colour sharing the larger disc's centre. The discs are the brand colours
+ * themselves laid over the background at a strength set by `intensity`, so no
+ * colour appears that is not in the brand. Everything drifts slowly and
+ * deterministically; the arrangement is seeded by the scene id so consecutive
+ * scenes do not look identical. The accent colour is left out unless the brand
+ * names it: by default it belongs to the type that sits on top.
  */
+/** Matches DEFAULT_BACKDROP_INTENSITY in shared/brand.ts (the bundle cannot import it: brand.ts pulls in zod). */
+const DEFAULT_INTENSITY = 0.25;
+
 export const BrandBackdrop: React.FC<{ seed: string; width: number; height: number }> = ({ seed, width, height }) => {
 	const { theme, fps, u } = useRender();
 	const t = useCurrentFrame() / fps;
 	const { background, primary, secondary, text } = theme.colors;
+	const style = theme.backdrop?.style ?? "shapes";
+	const colors = theme.backdrop?.colors?.length ? theme.backdrop.colors : [primary, secondary];
+	const intensity = theme.backdrop?.intensity ?? DEFAULT_INTENSITY;
 	const [r0 = 0, r1 = 0, r2 = 0, r3 = 0] = seeded(seed, 4);
+
+	if (style === "plain" || intensity <= 0) return <div style={{ position: "absolute", inset: 0, background }} />;
 
 	const D = Math.max(width, height);
 	const dark = isDark(background);
-	const tintA = tone(background, primary, dark ? 0.065 : 0.07, dark ? 0.7 : 0.5);
-	const tintB = tone(background, secondary, dark ? 0.045 : 0.05, dark ? 0.7 : 0.55);
+	// The default intensity gives a quiet tint (10% of the colour); full intensity shows the colours as they are.
+	const strength = intensity <= DEFAULT_INTENSITY ? (intensity / DEFAULT_INTENSITY) * 0.1 : 0.1 + ((intensity - DEFAULT_INTENSITY) / (1 - DEFAULT_INTENSITY)) * 0.9;
+	// A colour too close to the background to show (a dark primary on a dark background) gives way to the text colour.
+	const tint = (color: string, amount: number) =>
+		contrast(color, background) >= 1.25 ? mix(background, color, Math.min(1, amount)) : mix(background, text, Math.min(1, amount * 0.6));
+	const tintA = tint(colors[0]!, strength);
+	const tintB = tint(colors[1] ?? colors[0]!, strength * 0.8);
+	const tintC = colors[2] ? tint(colors[2], strength * 0.8) : undefined;
+	const ringScale = Math.min(3, intensity / DEFAULT_INTENSITY);
 
 	// Disc A hangs off one corner, disc B off the opposite one.
 	const corner = Math.floor(r0 * 4);
@@ -50,8 +68,13 @@ export const BrandBackdrop: React.FC<{ seed: string; width: number; height: numb
 			viewBox={`0 0 ${width} ${height}`}
 			style={{ position: "absolute", inset: 0, display: "block", background }}
 		>
-			<circle cx={ax} cy={ay} r={ra} fill={tintA} />
-			<circle cx={bx} cy={by} r={rb} fill={tintB} />
+			{style === "shapes" ? (
+				<>
+					<circle cx={ax} cy={ay} r={ra} fill={tintA} />
+					<circle cx={bx} cy={by} r={rb} fill={tintB} />
+					{tintC ? <circle cx={(right ? 0.96 : 0.04) * width} cy={(bottom ? -0.04 : 1.04) * height} r={rb * 0.55} fill={tintC} /> : null}
+				</>
+			) : null}
 			{rings.map((r, i) => (
 				<circle
 					key={i}
@@ -59,7 +82,7 @@ export const BrandBackdrop: React.FC<{ seed: string; width: number; height: numb
 					cy={ay}
 					r={r}
 					fill="none"
-					stroke={withAlpha(text, dark ? 0.1 - i * 0.015 : 0.12 - i * 0.02)}
+					stroke={withAlpha(text, Math.min(0.5, (dark ? 0.1 - i * 0.015 : 0.12 - i * 0.02) * ringScale))}
 					strokeWidth={1.5 * u}
 				/>
 			))}

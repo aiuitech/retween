@@ -31,13 +31,25 @@ export interface SpokenText {
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Matches any of the terms as a whole word, case-insensitively. */
+const termPattern = (terms: string[]) => new RegExp(`(?<![\\p{L}\\p{N}])(${terms.map(escapeRegExp).join("|")})(?![\\p{L}\\p{N}])`, "giu");
+
+/**
+ * The respellings that change this text: those whose term occurs in it as a
+ * whole word (as `buildSpokenText` matches them), in their original order.
+ * A take only depends on these, so adding a rule re-voices only the lines that use it.
+ */
+export function pronunciationsFor(text: string, pronunciations: Pronunciation[] = []): Pronunciation[] {
+	return pronunciations.filter((rule) => rule.term.trim() && rule.say.trim() && termPattern([rule.term.trim()]).test(text));
+}
+
 /** Applies pronunciation respellings (whole words, case-insensitive, longest term first). */
 export function buildSpokenText(text: string, pronunciations: Pronunciation[] = []): SpokenText {
 	const rules = pronunciations.filter((p) => p.term.trim() && p.say.trim()).sort((a, b) => b.term.length - a.term.length);
 	if (!rules.length) {
 		return { spoken: text, segments: [{ start: 0, end: text.length, spokenStart: 0, spokenEnd: text.length, replaced: false }] };
 	}
-	const pattern = new RegExp(`(?<![\\p{L}\\p{N}])(${rules.map((r) => escapeRegExp(r.term.trim())).join("|")})(?![\\p{L}\\p{N}])`, "giu");
+	const pattern = termPattern(rules.map((r) => r.term.trim()));
 	const say = new Map(rules.map((r) => [r.term.trim().toLowerCase(), r.say.trim()]));
 	const segments: Segment[] = [];
 	let spoken = "";

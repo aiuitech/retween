@@ -28,6 +28,8 @@ export interface ComposeAsset {
 	id: string;
 	kind: string;
 	ready: boolean;
+	/** Generation failed (as opposed to still pending). */
+	failed?: boolean;
 	durationSec?: number;
 	words?: SpokenWord[];
 	contentType?: string;
@@ -372,10 +374,10 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 		};
 
 		const bullets = scene.text?.bullets;
-		let timedBullets: { text: string; atFrame: number; icon?: TimelineIcon }[] | undefined;
+		let timedBullets: { text: string; atFrame: number; icon?: TimelineIcon; color?: string }[] | undefined;
 		if (bullets?.length) {
 			const at = cueFrames(bullets, "bullet", "narration");
-			timedBullets = bullets.map((bullet, i) => ({ text: bullet.text, atFrame: at[i]!, icon: icon(bullet.icon, label) }));
+			timedBullets = bullets.map((bullet, i) => ({ text: bullet.text, atFrame: at[i]!, icon: icon(bullet.icon, label), ...(bullet.color ? { color: bullet.color } : {}) }));
 		}
 
 		let chart: TimelineScene["content"]["chart"];
@@ -410,7 +412,11 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 			const assetId = effect.assetId ?? resolved.sfx[`${scene.id}:${i}`]?.assetId;
 			const asset = ready(assetId, ["audio"]);
 			if (!asset) {
-				if (!resolved.withheld?.[`sfx:${scene.id}:${i}`]) warnings.push(`${label}: sound effect ${i + 1} is not available and was left out`);
+				if (resolved.withheld?.[`sfx:${scene.id}:${i}`]) return;
+				if (effect.assetId) warnings.push(`${label}: sound effect ${i + 1} (asset ${effect.assetId}) is not available and was left out`);
+				else if (assetId && assets.get(assetId)?.failed) warnings.push(`${label}: sound effect ${i + 1} could not be generated, so it was left out (video.prepare tries again)`);
+				// Not generated yet: expected before video.prepare, so a draft says nothing.
+				else if (!draft) warnings.push(`${label}: sound effect ${i + 1} has not been generated yet, so it is left out until video.prepare makes it`);
 				return;
 			}
 			const length = Math.max(1, frames(asset.durationSec ?? 2));
@@ -452,6 +458,7 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 				cta: text.cta,
 				lowerThird: text.lowerThird,
 				showLogo: text.showLogo ?? (scene.type === "outro" ? true : undefined),
+				...(text.color ? { color: text.color } : {}),
 				chart,
 				map,
 				...(scene.custom
