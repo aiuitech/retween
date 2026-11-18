@@ -394,6 +394,60 @@ const MIME: Record<string, string> = {
 	woff2: "font/woff2", woff: "font/woff", ttf: "font/ttf", otf: "font/otf",
 };
 
+/** Files above this go up in parts (one request to the service carries at most about 100 MB). */
+const MULTIPART_THRESHOLD = 90 * 1000 * 1000;
+
+/** Uploads a large file in parts, two at a time, retrying each part a few times. */
+async function uploadInParts(file: string, size: number, type: string, project: string, query: URLSearchParams): Promise<unknown> {
+	const start = await request(`/api/v1/projects/${encodeURIComponent(project)}/uploads`, {
+		method: "POST",
+		headers: { "content-type": "application/json" },
+		body: JSON.stringify({ name: query.get("name"), contentType: type, bytes: size, tags: query.get("tags") ?? undefined, description: query.get("description") ?? undefined }),
+	});
+	const plan = await unwrap<{ uploadId: string; partSize: number; parts: number; partUrl: string; completeUrl: string }>(start);
+	const done: { partNumber: number; etag: string }[] = [];
+	const queue = Array.from({ length: plan.parts }, (_, i) => i + 1);
+	let sent = 0;
+	const sendPart = async (partNumber: number) => {
+		const from = (partNumber - 1) * plan.partSize;
+		const to = Math.min(size, from + plan.partSize) - 1;
+		for (let attempt = 1; ; attempt++) {
+			try {
+				const response = await fetch(plan.partUrl.replace("{partNumber}", String(partNumber)), {
+					method: "PUT",
+					headers: { "content-length": String(to - from + 1), "user-agent": `retween-cli/${VERSION}` },
+					body: Readable.toWeb(createReadStream(file, { start: from, end: to })) as never,
+					duplex: "half",
+				} as RequestInit);
+				const part = await unwrap<{ partNumber: number; etag: string }>(response);
+				sent += to - from + 1;
+				info(dim(`  part ${partNumber}/${plan.parts} done (${Math.round((sent / size) * 100)}%)`));
+				return part;
+			} catch (error) {
+				if (attempt >= 3) throw error;
+				info(dim(`  part ${partNumber} failed (${error instanceof Error ? error.message : error}); retrying`));
+				await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+			}
+		}
+	};
+	try {
+		await Promise.all(
+			Array.from({ length: Math.min(2, plan.parts) }, async () => {
+				for (let n = queue.shift(); n; n = queue.shift()) done.push(await sendPart(n));
+			}),
+		);
+		const complete = await fetch(plan.completeUrl, {
+			method: "POST",
+			headers: { "content-type": "application/json", "user-agent": `retween-cli/${VERSION}` },
+			body: JSON.stringify({ parts: done }),
+		});
+		return (await unwrap<Result>(complete)).asset;
+	} catch (error) {
+		await fetch(plan.completeUrl.replace(/\/complete$/, ""), { method: "DELETE" }).catch(() => undefined);
+		throw error;
+	}
+}
+
 async function upload(files: string[], flags: Map<string, string | true>) {
 	const project = flags.get("project") ?? flags.get("projectId");
 	if (typeof project !== "string") throw new CliError("Say which project: --project <id>");
@@ -409,6 +463,10 @@ async function upload(files: string[], flags: Map<string, string | true>) {
 		if (typeof flags.get("description") === "string") query.set("description", flags.get("description") as string);
 		const size = statSync(file).size;
 		info(dim(`uploading ${basename(file)} (${(size / 1e6).toFixed(1)} MB)`));
+		if (size > MULTIPART_THRESHOLD) {
+			uploaded.push(await uploadInParts(file, size, type, project, query));
+			continue;
+		}
 		const response = await request(`/api/v1/projects/${encodeURIComponent(project)}/assets?${query}`, {
 			method: "PUT",
 			headers: { "content-type": type, "content-length": String(size) },

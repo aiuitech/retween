@@ -71,6 +71,21 @@ export class PipelineWorkflow extends WorkflowEntrypoint<Env, PipelineParams> {
 			await generate("voice and visuals", 1);
 			await generate("clips and music", 2);
 
+			// The person's own footage is timed from its transcript, so it has to have finished processing.
+			for (let i = 0; i < 400; i++) {
+				const processing = await step.do(`check footage ${i}`, async () => {
+					const { video } = await loadVideo(videoId);
+					const ids = [...new Set(video.storyboard.scenes.map((scene) => scene.footage?.assetId).filter((id): id is string => Boolean(id)))];
+					if (!ids.length) return 0;
+					const rows = await db.query.assets.findMany({ where: inArray(schema.assets.id, ids) });
+					const busy = rows.filter((row) => (row.meta.footage as { status?: string } | undefined)?.status === "processing").length;
+					if (busy) await setPipeline(videoId, { stage: "assets", message: `Waiting for ${busy} recording${busy === 1 ? "" : "s"} to finish processing` });
+					return busy;
+				});
+				if (!processing) break;
+				await step.sleep(`wait footage ${i}`, "10 seconds");
+			}
+
 			const composed = await step.do("compose", async () => {
 				await setPipeline(videoId, { stage: "compose", message: "Timing scenes to the audio" });
 				const { video, project } = await loadVideo(videoId);

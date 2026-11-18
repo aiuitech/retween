@@ -166,3 +166,65 @@ export async function listVoices(search?: string): Promise<{ voices: Voice[]; no
 		})),
 	};
 }
+
+// --- speech to text -----------------------------------------------------------------
+
+export const TRANSCRIBE_MODEL = "scribe_v2";
+
+export interface Transcript {
+	/** Words with start and end in seconds. */
+	words: [word: string, start: number, end: number][];
+	/** Who says each word (`speaker_0`, …), parallel to `words`, when there is more than one speaker. */
+	speakers?: string[];
+	/** Sounds that are not speech, e.g. "(laughter)". */
+	events: [text: string, start: number, end: number][];
+	language?: string;
+	durationSec?: number;
+	transcriptionId?: string;
+}
+
+/**
+ * Transcribes a recording, with word timings and speakers. Send the file, or
+ * a link ElevenLabs downloads it from (a signed link to the voice track).
+ */
+export async function transcribe(input: { file?: Blob; sourceUrl?: string; language?: string; keyterms?: string[]; speakers?: number }): Promise<Transcript> {
+	const form = new FormData();
+	form.set("model_id", TRANSCRIBE_MODEL);
+	if (input.file) form.set("file", input.file, "voice.m4a");
+	else if (input.sourceUrl) form.set("source_url", input.sourceUrl);
+	else throw new AppError(500, "Nothing to transcribe", "invalid_state");
+	form.set("timestamps_granularity", "word");
+	form.set("diarize", "true");
+	form.set("tag_audio_events", "true");
+	if (input.language) form.set("language_code", input.language);
+	if (input.speakers) form.set("num_speakers", String(input.speakers));
+	for (const term of input.keyterms ?? []) form.append("keyterms", term);
+	const response = await fetch(`${BASE}/v1/speech-to-text`, { method: "POST", headers: { "xi-api-key": env.ELEVENLABS_API_KEY }, body: form });
+	if (!response.ok) throw await upstreamError("Transcription", response);
+	const json = (await response.json()) as {
+		language_code?: string;
+		audio_duration_secs?: number;
+		transcription_id?: string;
+		words?: { text: string; type: "word" | "spacing" | "audio_event"; start?: number; end?: number; speaker_id?: string }[];
+	};
+	const words: Transcript["words"] = [];
+	const speakers: string[] = [];
+	const events: Transcript["events"] = [];
+	const r = (n: number | undefined) => Math.round((n ?? 0) * 1000) / 1000;
+	for (const item of json.words ?? []) {
+		if (item.type === "word" && item.text.trim()) {
+			words.push([item.text.trim(), r(item.start), r(item.end)]);
+			speakers.push(item.speaker_id ?? "speaker_0");
+		} else if (item.type === "audio_event") {
+			events.push([item.text.trim(), r(item.start), r(item.end)]);
+		}
+	}
+	return {
+		words,
+		speakers: new Set(speakers).size > 1 ? speakers : undefined,
+		events,
+		language: json.language_code,
+		durationSec: json.audio_duration_secs,
+		transcriptionId: json.transcription_id ?? response.headers.get("request-id") ?? undefined,
+	};
+}

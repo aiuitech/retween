@@ -238,7 +238,7 @@ export const renders = sqliteTable(
 	(t) => [index("renders_video_idx").on(t.videoId), index("renders_project_idx").on(t.projectId)],
 );
 
-export type UsageKind = "image" | "video" | "speech" | "music" | "sfx" | "render" | "preview" | "storage";
+export type UsageKind = "image" | "video" | "speech" | "music" | "sfx" | "transcription" | "render" | "preview" | "footage" | "storage";
 
 /**
  * How a usage event's cost was arrived at, from most to least exact:

@@ -8,6 +8,8 @@ import { CONTAINER_INSTANCE_TYPE, R2_USD_PER_GB_MONTH, containerUsdPerSecond } f
 import { recordUsage } from "./usage.ts";
 
 const PREVIEW_PREFIX = "preview-";
+/** Footage processing instances, `footage-<asset id>` (services/footage.ts). Spelled out here to keep this module free of imports from there. */
+const FOOTAGE_PREFIX = "footage-";
 
 /** The renderer instance that serves one person's preview frames. */
 export const previewInstance = (userId: string) => `${PREVIEW_PREFIX}${userId}`;
@@ -18,9 +20,12 @@ export const previewInstance = (userId: string) => `${PREVIEW_PREFIX}${userId}`;
  */
 export async function recordContainerRun(instance: string, startedAt: number, stoppedAt: number): Promise<void> {
 	const seconds = Math.max(0, (stoppedAt - startedAt) / 1000);
-	let owner: { userId: string; projectId: string | null; kind: "preview" | "render" } | undefined;
+	let owner: { userId: string; projectId: string | null; kind: "preview" | "render" | "footage" } | undefined;
 	if (instance.startsWith(PREVIEW_PREFIX)) {
 		owner = { userId: instance.slice(PREVIEW_PREFIX.length), projectId: null, kind: "preview" };
+	} else if (instance.startsWith(FOOTAGE_PREFIX)) {
+		const asset = await db.query.assets.findFirst({ where: eq(schema.assets.id, instance.slice(FOOTAGE_PREFIX.length)) });
+		if (asset) owner = { userId: asset.createdBy, projectId: asset.projectId, kind: "footage" };
 	} else {
 		const render = await db.query.renders.findFirst({ where: eq(schema.renders.id, instance) });
 		if (render) owner = { userId: render.createdBy, projectId: render.projectId, kind: "render" };
@@ -52,7 +57,11 @@ export async function accrueStorage(day: Date = new Date()): Promise<{ users: nu
 	const daysInMonth = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth() + 1, 0)).getUTCDate();
 	const [assetRows, renderRows] = await Promise.all([
 		db
-			.select({ userId: schema.projects.ownerId, bytes: sql<number>`coalesce(sum(${schema.assets.bytes}), 0)` })
+			// Processed footage keeps the upload beside its edit master; both are stored.
+			.select({
+				userId: schema.projects.ownerId,
+				bytes: sql<number>`coalesce(sum(coalesce(${schema.assets.bytes}, 0) + coalesce(json_extract(${schema.assets.meta}, '$.footage.originalBytes'), 0)), 0)`,
+			})
 			.from(schema.assets)
 			.innerJoin(schema.projects, eq(schema.projects.id, schema.assets.projectId))
 			.groupBy(schema.projects.ownerId),

@@ -10,6 +10,8 @@ Live at https://retween.app. Three surfaces over one API:
 | CLI | `npm install -g https://retween.app/cli/retween.tgz` | `retween login` (device flow), or `RETWEEN_API_KEY` |
 | Web | https://retween.app | Google sign-in. Profile, API keys, library, admin dashboard |
 
+**Uploads.** Files up to 90 MB go up in one request (`PUT /api/v1/projects/<id>/assets`, or the signed link from `asset.upload_link`). Larger files, up to 4 GB, go up in 64 MiB parts through the Worker (R2 multipart, `services/uploads.ts`): start, PUT each part, then complete. The web app and `retween asset upload` switch to parts by themselves, and `asset.upload_link` gives agents the curl steps.
+
 ## How it fits together
 
 ```
@@ -19,6 +21,7 @@ shared/            contracts used by every part
   compose.ts         storyboard + measured media → timeline (pure function)
   timeline.ts        the render contract: absolute frames, resolution independent
   inspect.ts         frames to look at, cue sheets, pacing / layout / sound checks (pure)
+  footage.ts         cutting a person's own recording by quoting its transcript (pure)
   narration.ts       pronunciation respelling and word timings
 src/worker/        the Cloudflare Worker
   ops/               every capability, defined once (name, description, zod input, handler)
@@ -51,7 +54,23 @@ An operation added to `src/worker/ops/` appears as an MCP tool, a CLI command an
 
 Sheets are a second Remotion composition (`renderer/src/Sheet.tsx`): each tile is the video laid out at full export size, frozen on one frame and scaled down with a transform, so one page load covers many frames and text fits exactly as in the export.
 
-**Infrastructure.** Worker + static assets, D1 (`retween`), R2 (`retween-media`, private; files are served through signed URLs), four Workflows (asset, pipeline, render, publish), and a Durable Object-backed Container (`standard-4`, one instance per render, stopped when the render finishes).
+**Editing the person's own footage.** A phone video of someone talking (or an interview, or a voice memo) is footage, not just a background clip. Uploaded video is processed automatically by the `retween-footage` Workflow on a container instance named `footage-<asset id>`, using real ffmpeg (Debian's, in the renderer image):
+
+- **Edit master.** An H.264 version of the video, at 30 fps constant, upright, tone-mapped to SDR, at most 1080p, with a keyframe every second. It replaces the asset's file, because phone HEVC, HDR and variable frame rates do not play reliably in the renderer. The upload is kept beside it (`meta.footage.originalKey`, and counted in storage), and reprocessing starts again from it.
+- **Voice track.** A mono audio asset, high-passed (`denoise` adds light noise reduction) and levelled with two-pass loudnorm to −19 LUFS. A mono track plays on both channels at full level, which measures as −16, the same as generated narration.
+- **Shot changes and silences**, found during the same ffmpeg passes.
+- **Transcript.** ElevenLabs Scribe v2 transcribes the voice track with word timings, speakers and sound events, about $0.20 an hour. The result is stored as the asset's `meta.words`, the same shape as narration. If transcription fails, the footage is still usable, cut by seconds.
+
+| Op | What it does |
+| --- | --- |
+| `footage.process` | Process audio or imported video, or redo processing with a language, key terms or noise reduction |
+| `footage.get` | Progress, plus what the recording holds: length, picture, loudness, and transcript size with retake and filler counts |
+| `footage.transcript` | Timed paragraphs by speaker, marked with retakes (restarted sentences), fillers, pauses and shot changes. Also SRT, words, and search |
+| `footage.view` | A contact sheet of frames, each labelled with its time and what is being said |
+
+A scene uses a stretch of a recording with `footage: { assetId, from, to }`. `from` and `to` are quoted words (or seconds), and the cut is placed in the pauses around them, frame-aligned so picture and voice start together. The scene lasts exactly that long, and its captions, bullet, chart and map cues, and music ducking follow the recording. `show: "speaker"` makes the footage the scene's picture (beside the text in a split scene), muted, with the voice track playing as the narration. Back-to-back cuts from one recording alternate between 1× and 1.12× zoom to hide the jump. `show: "voice"` plays the person over the scene's own visual, as b-roll. Any picture or footage can also take a `look`: brightness, contrast, saturation, temperature, grayscale, blur and vignette. Video visuals take a `speed`.
+
+**Infrastructure.** Worker + static assets, D1 (`retween`), R2 (`retween-media`, private; files are served through signed URLs), five Workflows (asset, pipeline, render, publish, footage), and a Durable Object-backed Container (`standard-4`, one instance per render, stopped when the render finishes).
 
 ## Develop
 

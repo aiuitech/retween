@@ -97,6 +97,47 @@ export async function verifyUploadUrl(url: URL): Promise<{ projectId: string; us
 	}
 }
 
+/** What a multipart upload token carries: enough to add parts and finish without a session. */
+export interface MultipartGrant {
+	assetId: string;
+	projectId: string;
+	userId: string;
+	/** R2 object key. */
+	key: string;
+	/** R2's multipart upload id. */
+	uploadId: string;
+	partSize: number;
+	bytes: number;
+	/** Unix seconds. */
+	exp: number;
+}
+
+/**
+ * An opaque, expiring token for one multipart upload. The `multipart:` prefix
+ * keeps its signature from ever matching a download or upload-link signature.
+ */
+export async function multipartToken(grant: Omit<MultipartGrant, "exp">, expiresIn: number): Promise<string> {
+	const payload = base64Url.encode(JSON.stringify({ ...grant, exp: Math.floor(Date.now() / 1000) + expiresIn }));
+	return `${payload}.${await sign(`multipart:${payload}`)}`;
+}
+
+/** The grant inside a multipart token, if it is genuine and unexpired. */
+export async function verifyMultipartToken(token: string): Promise<MultipartGrant | null> {
+	const [payload, signature = ""] = token.split(".");
+	if (!payload) return null;
+	const expected = await sign(`multipart:${payload}`);
+	if (expected.length !== signature.length) return null;
+	let diff = 0;
+	for (let i = 0; i < expected.length; i++) diff |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+	if (diff !== 0) return null;
+	try {
+		const grant = JSON.parse(base64Url.decode(payload)) as MultipartGrant;
+		return grant.exp >= Date.now() / 1000 ? grant : null;
+	} catch {
+		return null;
+	}
+}
+
 /** Streams an object, honouring Range and conditional headers. */
 export async function serveObject(request: Request, key: string, downloadAs?: string | null): Promise<Response> {
 	const object = await env.MEDIA.get(key, { range: request.headers, onlyIf: request.headers });

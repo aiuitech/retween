@@ -109,7 +109,7 @@ export async function reconcileContainers(): Promise<ReconcileResult> {
 		.where(
 			and(
 				eq(usage.provider, "cloudflare"),
-				inArray(usage.kind, ["render", "preview"]),
+				inArray(usage.kind, ["render", "preview", "footage"]),
 				eq(usage.basis, "metered"),
 				isNotNull(usage.ref),
 				gte(usage.createdAt, daysAgo(WINDOW_DAYS)),

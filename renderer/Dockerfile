@@ -42,11 +42,17 @@ RUN find node_modules \( -name '*.map' -o -name '*.md' -o -name '*.d.ts' -o -nam
 FROM debian:bookworm-slim AS runtime
 # Shared libraries Chrome Headless Shell needs (https://www.remotion.dev/docs/miscellaneous/linux-dependencies),
 # one base font so no glyph can ever render invisibly, and tini to reap Chrome's child processes.
+# ffmpeg (Debian's full build: libx264, zscale for HDR tone mapping) prepares uploaded footage
+# (server/footage.ts); Remotion keeps using its own bundled copy for rendering. Its packages drag in
+# Mesa's GPU drivers and the LLVM they are built on (~170 MB). Nothing links them (the drivers are
+# loaded on demand, and there is no GPU), so they are removed in the same layer.
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends \
 		libnss3 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libgbm1 libasound2 libxrandr2 libxkbcommon0 \
 		libxfixes3 libxcomposite1 libxdamage1 libpango-1.0-0 libcairo2 libcups2 \
-		fonts-dejavu-core ca-certificates tini \
+		fonts-dejavu-core ca-certificates tini ffmpeg \
+	&& rm -rf /usr/lib/x86_64-linux-gnu/dri /usr/lib/x86_64-linux-gnu/libLLVM-*.so* \
+	&& ffmpeg -hide_banner -version > /dev/null && ffprobe -hide_banner -version > /dev/null \
 	&& rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man
 COPY --from=deps /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app/renderer

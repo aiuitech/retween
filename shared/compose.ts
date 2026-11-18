@@ -10,6 +10,7 @@
  * Pure function: no I/O, so it can be tested and reasoned about on its own.
  */
 import { type BrandKit, DEFAULTS, resolveTheme } from "./brand.ts";
+import { resolveRange, stamp } from "./footage.ts";
 import type { SpokenWord } from "./narration.ts";
 import { type Scene, type SceneVisual, type Storyboard, iconName } from "./storyboard.ts";
 import {
@@ -32,6 +33,8 @@ export interface ComposeAsset {
 	contentType?: string;
 	/** Icons: true when the icon is a single-colour glyph that takes the scene's colours. */
 	mono?: boolean;
+	/** A processed recording: its levelled voice track and length. Its transcript is `words`. */
+	footage?: { audioAssetId?: string; durationSec: number; hasVideo: boolean };
 }
 
 type Ref = { assetId: string; hash: string };
@@ -182,6 +185,8 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 	const timings: SceneTiming[] = [];
 	const narrationRanges: [number, number][] = [];
 	let cursor = 0;
+	/** The previous scene, when it showed someone on camera: back-to-back cuts from one recording alternate their framing. */
+	let lastSpeaker: { assetId: string; endSec: number; zoom: number } | undefined;
 
 	storyboard.scenes.forEach((scene, index) => {
 		const label = `Scene "${scene.id}"`;
@@ -197,14 +202,42 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 				estimatedSec = (spokenWords / (brand.narration?.wordsPerMinute ?? 155)) * 60;
 			}
 		}
-		const words = narration?.words ?? [];
-		const narrationSec = narration ? (narration.durationSec ?? words.at(-1)?.[2] ?? 0) : estimatedSec;
-		const hasVoice = Boolean(narration) || estimatedSec > 0;
-		const leadIn = (scene.timing?.leadInMs ?? brand.format?.leadInMs ?? DEFAULTS.leadInMs) / 1000;
-		const tail = (scene.timing?.tailMs ?? brand.format?.tailMs ?? DEFAULTS.tailMs) / 1000;
+		let words = narration?.words ?? [];
+		let narrationSec = narration ? (narration.durationSec ?? words.at(-1)?.[2] ?? 0) : estimatedSec;
+
+		// --- the person's own recording, in place of narration ------------------
+		const cut = scene.footage ? footageCut(scene, label) : undefined;
+		if (cut) {
+			words = cut.words;
+			narrationSec = cut.endSec - cut.startSec;
+		}
+		const hasVoice = Boolean(narration) || estimatedSec > 0 || Boolean(cut);
+		// A cut from a recording already carries its own breath before and after the words.
+		const leadIn = (scene.timing?.leadInMs ?? (cut ? 0 : (brand.format?.leadInMs ?? DEFAULTS.leadInMs))) / 1000;
+		const tail = (scene.timing?.tailMs ?? (cut ? 0 : (brand.format?.tailMs ?? DEFAULTS.tailMs))) / 1000;
 
 		// --- visual ----------------------------------------------------------
-		const background = resolveBackground(scene, label);
+		let background = resolveBackground(scene, label);
+		let speakerZoom: number | undefined;
+		if (cut?.speaker) {
+			if (scene.visual && scene.visual.source !== "brand") warnings.push(`${label}: the footage is shown, so its visual is not used. Set footage.show to "voice" to keep the visual.`);
+			const contiguous = lastSpeaker?.assetId === cut.assetId && Math.abs(lastSpeaker.endSec - cut.startSec) < 0.25;
+			speakerZoom =
+				scene.footage?.zoom ?? (lastSpeaker?.assetId === cut.assetId && !scene.transition ? (contiguous ? lastSpeaker.zoom : lastSpeaker.zoom > 1 ? 1 : 1.12) : 1);
+			background = {
+				kind: "video",
+				src: src(cut.assetId),
+				fit: "cover",
+				// The picture starts as early as the lead-in, so lips and voice stay in sync.
+				startFromSec: Math.max(0, cut.startSec - leadIn),
+				loop: false,
+				volume: 0,
+				playbackRate: 1,
+				focus: scene.footage?.focus ?? scene.visual?.focus,
+				zoom: speakerZoom > 1 ? speakerZoom : undefined,
+				look: scene.footage?.look,
+			};
+		}
 
 		// --- duration --------------------------------------------------------
 		const minSeconds = scene.timing?.minSeconds ?? brand.format?.minSceneSeconds ?? DEFAULTS.minSceneSeconds;
@@ -217,6 +250,9 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 					`${label}: narration runs ${narrationSec.toFixed(1)}s but the scene is fixed at ${seconds}s, so the voice is cut off. Remove timing.seconds to fit it.`,
 				);
 			}
+		} else if (cut) {
+			// Exactly the stretch: any longer and the picture would run on past the words.
+			seconds = leadIn + narrationSec + tail;
 		} else if (hasVoice) {
 			seconds = Math.max(minSeconds, leadIn + narrationSec + tail);
 			if (seconds > maxSeconds) {
@@ -224,7 +260,7 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 			}
 		} else {
 			const clip = background.kind === "video" ? ready(background.src.replace("asset://", "")) : undefined;
-			const clipSec = clip?.durationSec ? clip.durationSec - (background.kind === "video" ? background.startFromSec : 0) : 0;
+			const clipSec = clip?.durationSec && background.kind === "video" ? (clip.durationSec - background.startFromSec) / background.playbackRate : 0;
 			const readingSec = 1.4 + countWords(scene) / 2.6;
 			const typeSec =
 				scene.type === "outro"
@@ -244,30 +280,37 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 		cursor += durationInFrames;
 
 		// --- transition ------------------------------------------------------
-		const transitionType = scene.transition?.type ?? (index === 0 ? "cut" : (brand.motion?.transition ?? DEFAULTS.transition));
+		// Someone talking to camera is cut, not faded: a dissolve between two takes looks like a mistake.
+		const transitionType = scene.transition?.type ?? (index === 0 || cut?.speaker ? "cut" : (brand.motion?.transition ?? DEFAULTS.transition));
 		const transitionMs = scene.transition?.ms ?? brand.motion?.transitionMs ?? DEFAULTS.transitionMs;
 		const transitionFrames = transitionType === "cut" ? 0 : Math.min(frames(transitionMs / 1000), Math.floor(durationInFrames / 2));
 
 		// --- narration audio + captions -------------------------------------
-		if (narration) {
+		const voiceSrc = cut ? cut.audioAssetId && src(cut.audioAssetId) : narration && src(narration.id);
+		if (voiceSrc) {
 			const narrationStart = startFrame + frames(leadIn);
 			const available = startFrame + durationInFrames - narrationStart;
-			const length = scene.timing?.seconds ? Math.min(frames(narrationSec) + 2, available) : frames(narrationSec) + 2;
+			const length = cut ? Math.min(frames(narrationSec), available) : scene.timing?.seconds ? Math.min(frames(narrationSec) + 2, available) : frames(narrationSec) + 2;
 			if (length > 0) {
+				// A cut out of a longer recording fades over a couple of frames so it does not click.
+				const fade = cut ? Math.min(2, Math.floor(length / 4)) : 0;
 				audio.push({
 					id: `narration-${scene.id}`,
 					kind: "narration",
-					src: src(narration.id),
+					src: voiceSrc,
 					startFrame: narrationStart,
 					durationInFrames: length,
-					trimStartSec: 0,
-					volume: 1,
+					trimStartSec: cut ? cut.startSec : 0,
+					volume: cut ? (scene.footage?.volume ?? 1) : 1,
 					loop: false,
-					fadeInFrames: 0,
-					fadeOutFrames: 0,
+					fadeInFrames: fade,
+					fadeOutFrames: fade,
 				});
 				narrationRanges.push([narrationStart, narrationStart + length]);
 			}
+		}
+		if (voiceSrc || (cut && draft)) {
+			const narrationStart = startFrame + frames(leadIn);
 			const sceneEnd = startFrame + durationInFrames;
 			const cues = captionCues(words, maxCaptionWords);
 			cues.forEach((cue, i) => {
@@ -413,6 +456,7 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 				map,
 			},
 		});
+		lastSpeaker = cut?.speaker ? { assetId: cut.assetId, endSec: cut.endSec, zoom: speakerZoom ?? 1 } : undefined;
 		timings.push({
 			id: scene.id,
 			type: scene.type,
@@ -421,6 +465,59 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 			narrationSec: hasVoice ? narrationSec : undefined,
 		});
 	});
+
+	/**
+	 * The stretch of the person's recording a scene uses. Undefined when it
+	 * cannot be used (the reason is recorded); in a draft, a recording that is
+	 * still being processed is stood in for by its quoted length or a guess.
+	 */
+	function footageCut(
+		scene: Scene,
+		label: string,
+	): { assetId: string; audioAssetId?: string; startSec: number; endSec: number; words: SpokenWord[]; speaker: boolean } | undefined {
+		const footage = scene.footage!;
+		const asset = assets.get(footage.assetId);
+		const problem = !asset
+			? `${label}: footage ${footage.assetId} does not exist in this project`
+			: asset.kind !== "video" && asset.kind !== "audio"
+				? `${label}: footage ${footage.assetId} is a ${asset.kind}, not a video or a recording`
+				: !asset.ready
+					? `${label}: footage ${footage.assetId} is still uploading`
+					: !asset.footage
+						? `${label}: footage ${footage.assetId} has not been processed yet (footage.get shows its progress; footage.process starts it)`
+						: !asset.footage.audioAssetId
+							? `${label}: footage ${footage.assetId} has no sound to use`
+							: undefined;
+		if (problem && (!draft || !asset || (asset.kind !== "video" && asset.kind !== "audio"))) {
+			errors.push(problem);
+			return undefined;
+		}
+		const hasVideo = asset!.footage?.hasVideo ?? asset!.kind === "video";
+		const speaker = (footage.show ?? (hasVideo ? "speaker" : "voice")) === "speaker";
+		if (speaker && !hasVideo) {
+			errors.push(`${label}: footage ${footage.assetId} is sound only, so it cannot be shown; set footage.show to "voice"`);
+			return undefined;
+		}
+		if (problem) {
+			// Draft of footage that is not ready: seconds are taken as given, quoted words are guessed at.
+			warnings.push(problem);
+			const startSec = typeof footage.from === "number" ? footage.from : 0;
+			const endSec = typeof footage.to === "number" ? footage.to : startSec + (asset!.durationSec ? Math.min(asset!.durationSec - startSec, 8) : 5);
+			return { assetId: asset!.id, startSec, endSec: Math.max(endSec, startSec + 1), words: [], speaker };
+		}
+		try {
+			const range = resolveRange(asset!.words ?? [], footage, asset!.footage!.durationSec);
+			for (const warning of range.warnings) warnings.push(`${label}: ${warning}`);
+			if (!range.words.length) warnings.push(`${label}: nothing is said between ${stamp(range.startSec)} and ${stamp(range.endSec)} of the recording`);
+			// On a frame boundary, so the picture (trimmed by whole frames) and the voice start together.
+			const startSec = Math.round(range.startSec * fps) / fps;
+			const words = range.words.map(([word, start, end]): SpokenWord => [word, Math.max(0, start + range.startSec - startSec), end + range.startSec - startSec]);
+			return { assetId: asset!.id, audioAssetId: asset!.footage!.audioAssetId, ...range, startSec, words, speaker };
+		} catch (error) {
+			(draft ? warnings : errors).push(`${label}: ${error instanceof Error ? error.message : String(error)}`);
+			return undefined;
+		}
+	}
 
 	function resolveBackground(scene: Scene, label: string): TimelineBackground {
 		const visual: SceneVisual | undefined = scene.visual;
@@ -458,7 +555,7 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 				if (cut) cutout = { src: src(cut.id), mode: visual.cutout };
 				else if (!draft) warnings.push(`${label}: the cut-out of its picture is not available, so the whole picture is shown`);
 			}
-			return { kind: "image", src: src(asset.id), fit: visual.fit ?? "cover", focus: visual.focus, draw: draw || undefined, cutout };
+			return { kind: "image", src: src(asset.id), fit: visual.fit ?? "cover", focus: visual.focus, draw: draw || undefined, cutout, look: visual.look };
 		}
 		return {
 			kind: "video",
@@ -467,8 +564,9 @@ export function composeTimeline(input: ComposeInput): ComposeResult {
 			startFromSec: visual.startFromSec ?? 0,
 			loop: visual.loop ?? true,
 			volume: visual.volume ?? 0,
-			playbackRate: 1,
+			playbackRate: visual.speed ?? 1,
 			focus: visual.focus,
+			look: visual.look,
 		};
 	}
 

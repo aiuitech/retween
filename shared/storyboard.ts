@@ -7,7 +7,7 @@
  */
 import { z } from "zod";
 import { BrandCaptions } from "./brand.ts";
-import { SCENE_TYPES, TRANSITIONS } from "./timeline.ts";
+import { SCENE_TYPES, TRANSITIONS, TimelineLook } from "./timeline.ts";
 
 const short = z.string().max(300);
 
@@ -37,6 +37,12 @@ export function storyboardIcons(board: Storyboard, iconSet?: string): string[] {
 	}
 	return [...names];
 }
+
+/** A colour grade and effects for a picture or footage. */
+export const SceneLook = TimelineLook.describe(
+	"Grade the picture: brightness, contrast (1 = unchanged, 0–2), saturation (0 = black and white, 1 = unchanged), temperature (-1 cool … 1 warm), " +
+		"grayscale (0–1), blur (px, e.g. 8 to push a busy background back behind text) and vignette (0–1 darker corners)",
+);
 
 export const SceneVisual = z
 	.object({
@@ -85,6 +91,8 @@ export const SceneVisual = z
 		startFromSec: z.number().min(0).optional().describe("Video: where in the clip to start"),
 		loop: z.boolean().optional().describe("Video or Lottie: loop if the scene outlasts it (default true)"),
 		volume: z.number().min(0).max(1).optional().describe("Video: volume of the clip's own audio (default 0, muted)"),
+		speed: z.number().min(0.25).max(4).optional().describe("Video: playback speed, e.g. 0.5 for slow motion or 2 for a time-lapse feel (default 1)"),
+		look: SceneLook.optional(),
 	})
 	.superRefine((visual, ctx) => {
 		const need = (field: "assetId" | "prompt" | "query") => {
@@ -202,6 +210,41 @@ export const SceneMap = z.object({
 });
 export type SceneMap = z.infer<typeof SceneMap>;
 
+export const SceneFootage = z.object({
+	assetId: z
+		.string()
+		.describe("A recording of the person: a video or audio asset with a transcript (uploaded videos get one automatically; otherwise run footage.process)"),
+	from: z
+		.union([z.number().min(0), short])
+		.optional()
+		.describe('Where the stretch starts: the first few words spoken, quoted from footage.transcript (e.g. "so here is the thing"), or seconds into the recording. Default: the beginning'),
+	to: z
+		.union([z.number().min(0), short])
+		.optional()
+		.describe('Where it ends: the last few words spoken (e.g. "every single time"), or seconds. Default: the end. Cuts are placed in the pauses around words, so none is clipped'),
+	after: z.number().min(0).optional().describe("When the `from` words are said more than once: use the first time after this many seconds"),
+	show: z
+		.enum(["speaker", "voice"])
+		.optional()
+		.describe(
+			"speaker: the footage is the scene's picture (full frame in a media scene, beside the text in a split scene). " +
+				"voice: only its sound, over the scene's own visual (b-roll, a chart, a still). Default speaker for video, voice for audio",
+		),
+	volume: z.number().min(0).max(2).optional().describe("Loudness of the recording (default 1; it is levelled when processed)"),
+	zoom: z
+		.number()
+		.min(1)
+		.max(2)
+		.optional()
+		.describe("Punch in on the picture, e.g. 1.15. Back-to-back cuts from the same recording alternate between 1 and 1.12 on their own, which hides jump cuts"),
+	focus: z
+		.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) })
+		.optional()
+		.describe("The point kept in frame when cropping, usually the face (0–1 from the top-left)"),
+	look: SceneLook.optional(),
+});
+export type SceneFootage = z.infer<typeof SceneFootage>;
+
 export const Scene = z.object({
 	id: z
 		.string()
@@ -216,6 +259,9 @@ export const Scene = z.object({
 		),
 	label: short.optional().describe("Working title for the scene, never shown"),
 	narration: z.string().max(3000).optional().describe("What the voice says. The scene lasts as long as this takes to say"),
+	footage: SceneFootage.optional().describe(
+		"Use a stretch of the person's own recording instead of generated narration: the scene lasts as long as the stretch, and captions, cues and music ducking follow what they say",
+	),
 	visual: SceneVisual.optional().describe("What is on screen behind or beside the text. Defaults to the brand backdrop"),
 	text: SceneText.optional().describe("On-screen text"),
 	chart: SceneChart.optional().describe("type=chart: the data to plot. Values reveal in time with the narration"),
@@ -269,6 +315,9 @@ export const Storyboard = z
 				ctx.addIssue({ code: "custom", path: ["scenes", index, "id"], message: `duplicate scene id "${scene.id}"` });
 			}
 			seen.add(scene.id);
+			if (scene.footage && scene.narration?.trim()) {
+				ctx.addIssue({ code: "custom", path: ["scenes", index, "footage"], message: `scene "${scene.id}" has both narration and footage; use one` });
+			}
 			if (scene.type === "chart" && !scene.chart) {
 				ctx.addIssue({ code: "custom", path: ["scenes", index, "chart"], message: `chart scene "${scene.id}" needs chart data` });
 			}

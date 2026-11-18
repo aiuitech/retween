@@ -9,6 +9,7 @@ export type {
 	TimelineChart,
 	TimelineContent,
 	TimelineIcon,
+	TimelineLook,
 	TimelineMap,
 	TimelineScene,
 	TimelineTheme,

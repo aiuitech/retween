@@ -37,6 +37,24 @@ async function generateAndWait(asset: Asset, seconds: number) {
 	};
 }
 
+
+/** How to send a file over 90 MB through an upload link, in parts. */
+function multipartHelp(uploadUrl: string) {
+	const link = new URL(uploadUrl);
+	link.pathname = `${link.pathname}/multipart`;
+	const startUrl = link.toString();
+	return {
+		over: "90 MB",
+		startUrl,
+		steps: [
+			`curl -s -X POST "${startUrl}" -H 'content-type: application/json' -d '{"name":"talk.mov","bytes":'$(stat -f%z talk.mov 2>/dev/null || stat -c%s talk.mov)'}'   # → uploadId, partSize, parts, partUrl, completeUrl`,
+			"split -b <partSize> -a 3 -d talk.mov part.   # part.000, part.001, … (part.000 is part 1)",
+			'for each part N: curl -s -T part.<N-1, 3 digits> "<partUrl with {partNumber} = N>"   # → { partNumber, etag }',
+			`curl -s -X POST "<completeUrl>" -H 'content-type: application/json' -d '{"parts":[{"partNumber":1,"etag":"…"}, …]}'   # → the new asset`,
+		],
+		cli: "retween upload talk.mov --project <projectId>   (splits large files automatically)",
+	};
+}
 export const assetOps = [
 	defineOp({
 		name: "asset.list",
@@ -121,6 +139,8 @@ export const assetOps = [
 			"`uploadUrl` is for you: if you can run commands and have the files locally, upload each one with no sign-in: " +
 			'`curl -T <file> "<uploadUrl>&name=<file name>"` (add `&tags=logo,reference` or `&description=…` as wanted); each upload returns the new asset. ' +
 			"`pageUrl` is for the person you are working with: they open it in their browser, signed in to Retween, and drop files in; ask them to say when they are done, then find the files with asset.list. " +
+			"Files over 90 MB (most phone footage) must go up in parts: POST `multipart.startUrl` with JSON `{name, bytes}`, PUT each `partSize` slice of the file to `partUrl` (part numbers from 1), " +
+			"then POST the returned etags to `completeUrl` (see `multipart.steps`). The Retween CLI (`retween upload <file> --project <id>`) does this by itself. " +
 			"The upload URL works until it expires and can only add files to this project, so do not share it more widely than needed.",
 		input: z.object({
 			projectId,
@@ -136,6 +156,7 @@ export const assetOps = [
 				example: `curl -T logo.png "${upload.url}&name=logo.png&tags=logo"`,
 				pageUrl: `${env.APP_URL}/projects/${encodeURIComponent(project.id)}`,
 				accepts: "Images, video, audio and fonts. Name each file with its extension so its type is clear.",
+				multipart: multipartHelp(upload.url),
 			};
 		},
 	}),

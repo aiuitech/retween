@@ -72,8 +72,22 @@ export async function assetView(asset: Asset, options: { url?: boolean } = {}) {
 		model: asset.meta.model,
 		license: asset.license ?? undefined,
 		error: asset.error ?? undefined,
+		footage: footageBrief(asset),
 		url,
 		createdAt: asset.createdAt,
+	};
+}
+
+/** One line on a recording's processing, for asset listings (footage.get has the detail). */
+function footageBrief(asset: Asset) {
+	const footage = asset.meta.footage as { status: string; stage?: string; transcribed?: boolean; error?: string } | undefined;
+	if (!footage) return undefined;
+	const words = Array.isArray(asset.meta.words) ? asset.meta.words.length : 0;
+	return {
+		status: footage.status,
+		...(footage.status === "processing" && footage.stage ? { stage: footage.stage } : {}),
+		...(footage.transcribed ? { transcriptWords: words } : {}),
+		...(footage.error ? { error: footage.error } : {}),
 	};
 }
 
@@ -127,7 +141,18 @@ export async function storeAsset(
 	}
 	const key = assetKey(asset.projectId, asset.id, extensionFor(contentType, asset.name));
 	const stored = await env.MEDIA.put(key, body, { httpMetadata: { contentType } });
-	const info = await probeObject(key, contentType, stored.size);
+	return finishStoredObject(asset, key, contentType, stored.size, extra);
+}
+
+/** Measures a file already written to `key` and marks its asset ready. */
+export async function finishStoredObject(
+	asset: Asset,
+	key: string,
+	contentType: string,
+	size: number,
+	extra: { meta?: AssetMeta; durationMs?: number } = {},
+): Promise<Asset> {
+	const info = await probeObject(key, contentType, size);
 	const kind = asset.kind === "other" ? kindFor(contentType) : asset.kind;
 	const [updated] = await db
 		.update(schema.assets)
@@ -136,7 +161,7 @@ export async function storeAsset(
 			kind,
 			r2Key: key,
 			contentType,
-			bytes: stored.size,
+			bytes: size,
 			width: info.width,
 			height: info.height,
 			durationMs: info.durationMs ?? extra.durationMs,
@@ -173,6 +198,13 @@ export async function failAsset(assetId: string, message: string): Promise<void>
 
 export async function deleteAsset(asset: Asset): Promise<void> {
 	if (asset.r2Key) await env.MEDIA.delete(asset.r2Key);
+	// Processed footage: the upload kept beside the edit master, and its voice track.
+	const footage = asset.meta.footage as { originalKey?: string; audioAssetId?: string } | undefined;
+	if (footage?.originalKey && footage.originalKey !== asset.r2Key) await env.MEDIA.delete(footage.originalKey);
+	if (footage?.audioAssetId) {
+		const voice = await db.query.assets.findFirst({ where: eq(schema.assets.id, footage.audioAssetId) });
+		if (voice) await deleteAsset(voice);
+	}
 	await db.delete(schema.assets).where(eq(schema.assets.id, asset.id));
 }
 

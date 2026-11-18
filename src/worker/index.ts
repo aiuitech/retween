@@ -1,4 +1,5 @@
 import { oauthProviderAuthServerMetadata, oauthProviderOpenIdConfigMetadata } from "@better-auth/oauth-provider";
+import { env } from "cloudflare:workers";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { type Actor, actorById, actorFromRequest, assertActive, auth } from "./auth/index.ts";
@@ -8,15 +9,18 @@ import { INLINE_IMAGE, manifestEntry } from "./ops/registry.ts";
 import { YOUTUBE_SCOPE, authorizationUrl, exchangeCode, myChannel } from "./providers/youtube.ts";
 import { handleMcp } from "./routes/mcp.ts";
 import { assetView, createAsset, storeAsset } from "./services/assets.ts";
+import { afterUpload } from "./services/footage.ts";
 import { getProject } from "./services/projects.ts";
 import { contentTypeFor, kindFor, serveObject, verifySignedUrl, verifyUploadUrl } from "./services/storage.ts";
 import { accrueStorage } from "./services/metering.ts";
 import { reconcileContainers, reconcileFal } from "./services/reconcile.ts";
+import { abortMultipart, completeMultipart, startMultipart, uploadPart } from "./services/uploads.ts";
 import { budgetStatus } from "./services/usage.ts";
 import { connectState, readConnectState, saveChannel } from "./services/youtube.ts";
 
 export { Renderer } from "./renderer.ts";
 export { AssetWorkflow } from "./workflows/asset.ts";
+export { FootageWorkflow } from "./workflows/footage.ts";
 export { PipelineWorkflow } from "./workflows/pipeline.ts";
 export { PublishWorkflow } from "./workflows/publish.ts";
 export { RenderWorkflow } from "./workflows/render.ts";
@@ -173,6 +177,7 @@ async function receiveUpload(request: Request, actor: Actor, projectId: string) 
 		tags: query.get("tags")?.split(",").map((tag) => tag.trim()).filter(Boolean),
 	});
 	const stored = await storeAsset(asset, request.body, contentType);
+	await afterUpload(stored, actor);
 	return { ok: true, result: { asset: await assetView(stored) } };
 }
 
@@ -195,6 +200,43 @@ app.put("/api/uploads/:grant", async (c) => {
 	assertActive(actor);
 	return c.json(await receiveUpload(c.req.raw, actor, grant.projectId));
 });
+
+/** The JSON body of a request, or a 400. */
+const jsonBody = <T>(request: Request): Promise<T> =>
+	request.json<T>().catch(() => {
+		throw badRequest("The request body must be JSON");
+	});
+
+/**
+ * Files too large for one request (over about 90 MB) go up in parts; see
+ * services/uploads.ts. Starting needs a session or an upload link; the parts
+ * and the finish are authorised by the token that starting returns.
+ */
+app.post("/api/v1/projects/:projectId/uploads", async (c) => {
+	const actor = await requireActor(c.req.raw);
+	return c.json({ ok: true, result: await startMultipart(actor, c.req.param("projectId"), await jsonBody(c.req.raw), env.APP_URL) });
+});
+
+app.post("/api/uploads/:grant/multipart", async (c) => {
+	// The grant is signed over its own path segment, so check it as the plain upload link.
+	const link = new URL(c.req.url);
+	link.pathname = `/api/uploads/${c.req.param("grant")}`;
+	const grant = await verifyUploadUrl(link);
+	if (!grant) throw new AppError(403, "This upload link has expired or is not valid. Ask for a new one with asset.upload_link.", "invalid_link");
+	const actor = await actorById(grant.userId, "upload-link");
+	assertActive(actor);
+	return c.json({ ok: true, result: await startMultipart(actor, grant.projectId, await jsonBody(c.req.raw), env.APP_URL) });
+});
+
+app.put("/api/uploads/multipart/:token/:partNumber", async (c) =>
+	c.json({ ok: true, result: await uploadPart(c.req.param("token"), Number(c.req.param("partNumber")), c.req.raw) }),
+);
+
+app.post("/api/uploads/multipart/:token/complete", async (c) =>
+	c.json({ ok: true, result: await completeMultipart(c.req.param("token"), await jsonBody(c.req.raw)) }),
+);
+
+app.delete("/api/uploads/multipart/:token", async (c) => c.json({ ok: true, result: await abortMultipart(c.req.param("token")) }));
 
 // ------------------------------------------------------------ YouTube
 

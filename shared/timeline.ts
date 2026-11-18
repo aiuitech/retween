@@ -99,6 +99,25 @@ export const TimelineTheme = z.object({
 });
 export type TimelineTheme = z.infer<typeof TimelineTheme>;
 
+/**
+ * A grade applied to a picture or footage. Neutral values (1, or 0 for the
+ * rest) leave it untouched; `temperature` and `tint` are -1…1.
+ */
+export const TimelineLook = z.object({
+	brightness: z.number().min(0).max(2).optional(),
+	contrast: z.number().min(0).max(2).optional(),
+	saturation: z.number().min(0).max(3).optional(),
+	/** Warm (+) or cool (-). */
+	temperature: z.number().min(-1).max(1).optional(),
+	/** Black and white, 0–1. */
+	grayscale: z.number().min(0).max(1).optional(),
+	/** Pixels of blur at a 1080px short side. */
+	blur: z.number().min(0).max(40).optional(),
+	/** Darkened corners, 0–1. */
+	vignette: z.number().min(0).max(1).optional(),
+});
+export type TimelineLook = z.infer<typeof TimelineLook>;
+
 export const TimelineBackground = z.discriminatedUnion("kind", [
 	z.object({
 		kind: z.literal("image"),
@@ -113,6 +132,7 @@ export const TimelineBackground = z.discriminatedUnion("kind", [
 		 * in front of the picture for depth; `isolate` shows it alone on the brand backdrop.
 		 */
 		cutout: z.object({ src: z.string(), mode: z.enum(["parallax", "isolate"]) }).optional(),
+		look: TimelineLook.optional(),
 	}),
 	z.object({
 		kind: z.literal("video"),
@@ -124,6 +144,9 @@ export const TimelineBackground = z.discriminatedUnion("kind", [
 		volume: z.number().min(0).max(1),
 		playbackRate: z.number().positive(),
 		focus: z.object({ x: z.number(), y: z.number() }).optional(),
+		/** Scale around the focus point (1 = as framed). Used to punch in on footage. */
+		zoom: z.number().min(1).max(3).optional(),
+		look: TimelineLook.optional(),
 	}),
 	z.object({ kind: z.literal("solid"), color }),
 	z.object({ kind: z.literal("gradient"), colors: z.array(color).min(2), angle: z.number() }),

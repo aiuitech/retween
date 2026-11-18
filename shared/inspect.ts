@@ -230,13 +230,21 @@ export function pacingIssues(timeline: Timeline, storyboard: Storyboard): Issue[
 		const seconds = scene.durationInFrames / fps;
 		const base = { sceneId: scene.id, atSec: cue.startSec };
 
+		const board = storyboard.scenes.find((s) => s.id === scene.id);
 		if (seconds < 1.5) {
-			issues.push({ ...base, severity: "warning", kind: "short-scene", message: `Scene "${scene.id}" is on screen for only ${seconds.toFixed(1)}s.`, fix: "Add narration or set timing.minSeconds." });
+			issues.push({
+				...base,
+				severity: "warning",
+				kind: "short-scene",
+				message: `Scene "${scene.id}" is on screen for only ${seconds.toFixed(1)}s.`,
+				fix: board?.footage ? "Use a longer stretch of the footage, or join it to the next scene." : "Add narration or set timing.minSeconds.",
+			});
 		}
 
 		// Measured from the first word to the last, so pauses between sentences do not count: natural speech lands around 150-190.
 		const n = cue.narration;
-		if (n && n.words >= 8) {
+		// The person's own recording is at their own pace: nothing to tune there.
+		if (n && n.words >= 8 && !board?.footage) {
 			if (n.wordsPerMinute > 200) {
 				issues.push({
 					...base,
@@ -253,7 +261,11 @@ export function pacingIssues(timeline: Timeline, storyboard: Storyboard): Issue[
 		// Reading: about 4 words a second, after a beat to notice the text. Text that repeats the voice reads faster.
 		const words = onScreenWords(scene);
 		if (words > 12) {
-			const spoken = new Set(normalise(storyboard.scenes.find((s) => s.id === scene.id)?.narration ?? ""));
+			const end = scene.startFrame + scene.durationInFrames;
+			const said = board?.footage
+				? timeline.captions.filter((caption) => caption.startFrame >= scene.startFrame && caption.startFrame < end).map((caption) => caption.text).join(" ")
+				: (board?.narration ?? "");
+			const spoken = new Set(normalise(said));
 			const c = scene.content;
 			const shown = normalise([c.heading, c.subheading, c.body, c.quote, ...(c.bullets ?? []).map((b) => b.text)].filter(Boolean).join(" "));
 			const echoed = shown.length ? shown.filter((word) => spoken.has(word)).length / shown.length : 0;

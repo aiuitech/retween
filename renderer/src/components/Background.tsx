@@ -5,7 +5,7 @@ import { Img, useCurrentFrame } from "remotion";
 import { mediaOk, useRender } from "../context.ts";
 import { seeded } from "../lib/hash.ts";
 import { redact } from "../lib/preflight.ts";
-import type { TimelineBackground, TimelineScene } from "../types.ts";
+import type { TimelineBackground, TimelineLook, TimelineScene } from "../types.ts";
 import type { Rect } from "../lib/layout.ts";
 import { BrandBackdrop } from "./BrandBackdrop.tsx";
 import { DrawnSvg, IsolatedCutout, LottieLayer, ParallaxCutout } from "./Visuals.tsx";
@@ -34,14 +34,59 @@ export function isStaged(background: TimelineBackground, ok: (src: string) => bo
  * `visibleFrames` is how long the scene stays on screen (including the tail it
  * keeps under the next scene's transition) - the Ken Burns move spans all of it.
  */
-export const Background: React.FC<{
+type BackgroundProps = {
 	scene: TimelineScene;
 	width: number;
 	height: number;
 	visibleFrames: number;
 	/** Where a staged visual (Lottie, isolated cut-out) goes, inside this box. Defaults to the whole box, inset. */
 	stage?: Rect;
-}> = ({ scene, width, height, visibleFrames, stage }) => {
+};
+
+export const Background: React.FC<BackgroundProps> = (props) => {
+	const bg = props.scene.background;
+	const look = bg.kind === "image" || bg.kind === "video" ? bg.look : undefined;
+	if (!look || !hasLook(look)) return <BackgroundLayer {...props} />;
+	return (
+		<Graded look={look} width={props.width} height={props.height}>
+			<BackgroundLayer {...props} />
+		</Graded>
+	);
+};
+
+const hasLook = (look: TimelineLook) => Object.values(look).some((value) => value !== undefined);
+
+/**
+ * A colour grade over whatever is inside: CSS filters for brightness,
+ * contrast, saturation, black and white and blur; a soft-light wash for
+ * temperature; a radial shade for the vignette.
+ */
+const Graded: React.FC<{ look: TimelineLook; width: number; height: number; children: React.ReactNode }> = ({ look, width, height, children }) => {
+	const unit = Math.min(width, height) / 1080;
+	const filters = [
+		look.brightness !== undefined && look.brightness !== 1 ? `brightness(${look.brightness})` : "",
+		look.contrast !== undefined && look.contrast !== 1 ? `contrast(${look.contrast})` : "",
+		look.saturation !== undefined && look.saturation !== 1 ? `saturate(${look.saturation})` : "",
+		look.grayscale ? `grayscale(${look.grayscale})` : "",
+		look.blur ? `blur(${look.blur * unit}px)` : "",
+	].filter(Boolean);
+	const fill: React.CSSProperties = { position: "absolute", left: 0, top: 0, width, height, overflow: "hidden" };
+	const t = look.temperature ?? 0;
+	return (
+		<div style={fill}>
+			{/* Blur pulls in the edges; scaling up a little keeps them filled. */}
+			<div style={{ ...fill, filter: filters.length ? filters.join(" ") : undefined, transform: look.blur ? `scale(${1 + (look.blur * unit * 3) / Math.min(width, height)})` : undefined }}>
+				{children}
+			</div>
+			{t !== 0 && <div style={{ ...fill, background: t > 0 ? "#ff9a3c" : "#3c8dff", mixBlendMode: "soft-light", opacity: Math.min(1, Math.abs(t)) * 0.55 }} />}
+			{look.vignette ? (
+				<div style={{ ...fill, background: `radial-gradient(ellipse at center, rgba(0,0,0,0) ${Math.round(62 - look.vignette * 22)}%, rgba(0,0,0,${0.35 + look.vignette * 0.5}) 100%)` }} />
+			) : null}
+		</div>
+	);
+};
+
+const BackgroundLayer: React.FC<BackgroundProps> = ({ scene, width, height, visibleFrames, stage }) => {
 	const { theme, resolved, fps } = useRender();
 	const frame = useCurrentFrame();
 	const [failed, setFailed] = useState(false);
@@ -172,20 +217,24 @@ export const Background: React.FC<{
 		const h = info.height * k;
 		style = { position: "absolute", width: w, height: h, left: (width - w) * fx, top: (height - h) * fy };
 	}
+	// A punch-in scales around the focus point, so the face stays where it was.
+	const zoom = bg.zoom && bg.zoom > 1 ? bg.zoom : undefined;
 	return (
 		<div style={{ ...fill, background: theme.colors.background }}>
-			<Video
-				src={bg.src}
-				style={style}
-				objectFit={bg.fit}
-				trimBefore={Math.round(bg.startFromSec * fps)}
-				loop={bg.loop}
-				playbackRate={bg.playbackRate}
-				volume={bg.volume}
-				muted={bg.volume === 0}
-				delayRenderTimeoutInMilliseconds={45_000}
-				fallbackOffthreadVideoProps={{ onError: (err) => fail(err.message) }}
-			/>
+			<div style={zoom ? { ...fill, transform: `scale(${zoom})`, transformOrigin: `${fx * 100}% ${fy * 100}%` } : fill}>
+				<Video
+					src={bg.src}
+					style={style}
+					objectFit={bg.fit}
+					trimBefore={Math.round(bg.startFromSec * fps)}
+					loop={bg.loop}
+					playbackRate={bg.playbackRate}
+					volume={bg.volume}
+					muted={bg.volume === 0}
+					delayRenderTimeoutInMilliseconds={45_000}
+					fallbackOffthreadVideoProps={{ onError: (err) => fail(err.message) }}
+				/>
+			</div>
 		</div>
 	);
 };

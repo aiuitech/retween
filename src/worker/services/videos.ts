@@ -16,6 +16,7 @@ import { blockedReason, getControls, limitSpec } from "./controls.ts";
 import { iconLicense, iconSets, iconSvgUrl, missingIcons } from "../providers/iconify.ts";
 import { type Orientation, searchStock } from "../providers/stock.ts";
 import { type Asset, assetsById, createAsset, deleteAsset } from "./assets.ts";
+import { footageOf } from "./footage.ts";
 import { type Project, getProject } from "./projects.ts";
 
 export type Video = typeof schema.videos.$inferSelect;
@@ -44,6 +45,7 @@ function referencedAssetIds(storyboard: Storyboard, resolved: ResolvedMedia, bra
 	const ids = new Set<string | undefined>();
 	for (const scene of storyboard.scenes) {
 		ids.add(scene.visual?.assetId);
+		ids.add(scene.footage?.assetId);
 		for (const effect of scene.sfx ?? []) ids.add(effect.assetId);
 	}
 	for (const group of [resolved.narration, resolved.visual, resolved.sfx, resolved.icons ?? {}, resolved.cutout ?? {}]) {
@@ -68,7 +70,15 @@ const toComposeAsset = (asset: Asset): ComposeAsset => ({
 	words: asset.meta.words,
 	contentType: asset.contentType ?? undefined,
 	mono: typeof asset.meta.mono === "boolean" ? asset.meta.mono : undefined,
+	footage: footageForCompose(asset),
 });
+
+/** A recording that has finished processing, as compose sees it. */
+function footageForCompose(asset: Asset): ComposeAsset["footage"] {
+	const footage = footageOf(asset);
+	if (footage?.status !== "ready" || footage.durationSec === undefined) return undefined;
+	return { audioAssetId: footage.audioAssetId, durationSec: footage.durationSec, hasVideo: Boolean(footage.hasVideo) };
+}
 
 /** What the current timeline (if any) was built from; changes whenever a recompose is due. */
 export function compositionHash(video: Pick<Video, "storyboard" | "resolved">, brand: BrandKit): Promise<string> {

@@ -9,6 +9,10 @@
  *   POST /sheet    -> a contact sheet (many frames or media files on one image), as JSON
  *   POST /audio    -> loudness, balance and silence measurements of a timeline's mix, as JSON
  *   POST /cancel   -> stops the running render
+ *   POST /footage          -> 202, starts processing a recording into an edit master + voice track (footage.ts)
+ *   GET  /footage/status   -> that job's state, progress and result (?jobId=)
+ *   GET  /footage/output   -> ?jobId=&file=video|audio, with Range support
+ *   DELETE /footage        -> ?jobId=, removes the job's files
  */
 import fs from "node:fs";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
@@ -16,6 +20,7 @@ import { pipeline } from "node:stream/promises";
 import { RenderProps, Timeline } from "../../shared/timeline.ts";
 import type { SheetTile } from "../src/Sheet.tsx";
 import { analyseAudio } from "./audio.ts";
+import { deleteFootage, footageOutput, getFootageStatus, startFootage } from "./footage.ts";
 import {
 	availableCpus,
 	BUNDLE_DIR,
@@ -244,11 +249,55 @@ async function handleAudio(req: IncomingMessage, res: ServerResponse) {
 /** `?jobId=` picks one of the last few jobs; without it, the current one. */
 const jobIdOf = (req: IncomingMessage) => new URL(req.url ?? "/", "http://localhost").searchParams.get("jobId") ?? undefined;
 
+async function handleFootage(req: IncomingMessage, res: ServerResponse) {
+	const body = await readJson(req);
+	if (typeof body.jobId !== "string" || !/^[\w.-]{1,200}$/.test(body.jobId)) throw new HttpError(400, "jobId must be 1-200 letters, digits, dots, dashes or underscores");
+	if (typeof body.src !== "string" || !/^https?:\/\//.test(body.src)) throw new HttpError(400, "src must be an http(s) URL");
+	if (body.denoise !== undefined && typeof body.denoise !== "boolean") throw new HttpError(400, "denoise must be a boolean");
+	const known = getFootageStatus(body.jobId);
+	let status;
+	try {
+		status = startFootage(body.jobId, body.src, { denoise: body.denoise === true });
+	} catch (err) {
+		if ((err as { busy?: boolean }).busy) throw new HttpError(409, (err as Error).message);
+		throw err;
+	}
+	// A retry of a job this instance already has answers with where it stands.
+	if (known && known.state !== "error") return json(res, 200, status);
+	log("footage.start", { jobId: body.jobId, denoise: body.denoise === true });
+	json(res, 202, { ok: true, jobId: body.jobId });
+}
+
+async function handleFootageOutput(req: IncomingMessage, res: ServerResponse) {
+	const query = new URL(req.url ?? "/", "http://localhost").searchParams;
+	const jobId = query.get("jobId") ?? "";
+	const which = query.get("file");
+	if (which !== "video" && which !== "audio") throw new HttpError(400, 'file must be "video" or "audio"');
+	const file = footageOutput(jobId, which);
+	if (!file) throw new HttpError(404, `no ${which} output for footage job ${jobId}`);
+	await serveFile(req, res, file, which === "video" ? "video/mp4" : "audio/mp4");
+}
+
+async function handleFootageDelete(req: IncomingMessage, res: ServerResponse) {
+	const jobId = jobIdOf(req);
+	if (!jobId) throw new HttpError(400, "jobId is required");
+	try {
+		json(res, 200, { deleted: await deleteFootage(jobId) });
+	} catch (err) {
+		throw new HttpError(409, (err as Error).message);
+	}
+}
+
 async function handleOutput(req: IncomingMessage, res: ServerResponse) {
 	const file = getOutputPath(jobIdOf(req));
 	if (!file || !fs.existsSync(file)) throw new HttpError(404, "no finished output");
+	await serveFile(req, res, file, "video/mp4");
+}
+
+/** Sends a file, honouring a single Range (the Worker copies large files into R2 in ranged parts). */
+async function serveFile(req: IncomingMessage, res: ServerResponse, file: string, contentType: string) {
 	const { size } = fs.statSync(file);
-	const base = { "content-type": "video/mp4", "accept-ranges": "bytes", "cache-control": "no-store" };
+	const base = { "content-type": contentType, "accept-ranges": "bytes", "cache-control": "no-store" };
 	const range = req.headers.range;
 	let start = 0;
 	let end = size - 1;
@@ -302,6 +351,16 @@ const routes: Record<string, Partial<Record<string, (req: IncomingMessage, res: 
 	"/audio": { POST: handleAudio },
 	"/output": { GET: handleOutput, HEAD: handleOutput },
 	"/cancel": { POST: async (_req, res) => json(res, 200, { cancelled: await cancelRender() }) },
+	"/footage": { POST: handleFootage, DELETE: handleFootageDelete },
+	"/footage/status": {
+		GET: (req, res) => {
+			const jobId = jobIdOf(req);
+			const status = jobId ? getFootageStatus(jobId) : undefined;
+			if (!status) throw new HttpError(404, `no footage job ${jobId ?? ""} on this instance (it may have restarted)`);
+			json(res, 200, status);
+		},
+	},
+	"/footage/output": { GET: handleFootageOutput, HEAD: handleFootageOutput },
 };
 
 const server = http.createServer(async (req, res) => {

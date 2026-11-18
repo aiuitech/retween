@@ -20,6 +20,9 @@ export const ELEVENLABS = {
 	},
 	musicUsdPerMinute: 0.15,
 	sfxUsdPerMinute: 0.12,
+	/** Scribe v2, per hour of audio; key terms add to it. */
+	transcriptionUsdPerHour: 0.2,
+	transcriptionKeytermsUsdPerHour: 0.05,
 };
 
 /** fal list prices, used when its pricing API cannot be reached or the request reported no billable units. */
