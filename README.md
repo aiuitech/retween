@@ -94,12 +94,11 @@ After changing auth plugins: `pnpm exec auth generate --config auth.gen.ts --out
 Uses the `cf` CLI (not Wrangler); configuration is in `cloudflare.config.ts`. Docker must be running to build the renderer image.
 
 ```sh
-pnpm db:migrate             # apply new migrations to production D1
-pnpm run deploy             # build and deploy; existing secrets are kept
-pnpm run deploy:secrets     # same, and upload secrets from .secrets.production
+pnpm run deploy             # build the CLI, apply D1 migrations, upload secrets, deploy
+pnpm run deploy --dry-run   # build and check without migrating or uploading
 ```
 
-Secrets (in `.secrets.production`, which is git-ignored): `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENROUTER_API_KEY`, `ELEVENLABS_API_KEY`, and optionally `PEXELS_API_KEY`, `PIXABAY_API_KEY` (more stock) and `FAL_KEY` (subject cut-outs and vector illustrations through fal.ai).
+Secrets are uploaded from `.secrets.production` (git-ignored) on every deploy; without that file, the deployed secrets are left as they are. They are: `BETTER_AUTH_SECRET`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `OPENROUTER_API_KEY`, `ELEVENLABS_API_KEY`, and optionally `PEXELS_API_KEY`, `PIXABAY_API_KEY` (more stock) and `FAL_KEY` (subject cut-outs and vector illustrations through fal.ai).
 
 Google OAuth client: authorised redirect URIs `https://retween.app/api/auth/callback/google` and `https://retween.app/api/youtube/callback` (plus the `http://localhost:5173/…` equivalents for local development).
 

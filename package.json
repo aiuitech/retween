@@ -6,15 +6,14 @@
 	"scripts": {
 		"dev": "cf dev",
 		"build": "cf build",
-		"deploy": "pnpm run build:cli && cf deploy",
+		"deploy": "bash scripts/deploy.sh",
 		"typecheck": "cf workers types && tsc",
 		"test": "node --test shared/",
 		"build:cli": "node cli/build.mjs",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate:local": "cf d1 migrations apply 202514c9-ef9c-4055-a818-9147862d5554 --local",
 		"db:migrate": "cf d1 migrations apply 202514c9-ef9c-4055-a818-9147862d5554",
-		"renderer": "pnpm --dir renderer run build && PORT=8099 pnpm --dir renderer start",
-		"deploy:secrets": "pnpm run build:cli && cf deploy --secrets-file .secrets.production"
+		"renderer": "pnpm --dir renderer run build && PORT=8099 pnpm --dir renderer start"
 	},
 	"dependencies": {
 		"@better-auth/api-key": "^1.7.25",
