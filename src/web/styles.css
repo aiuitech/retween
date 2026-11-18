@@ -1848,3 +1848,29 @@ label.check {
 	margin-top: 14px;
 	width: 100%;
 }
+
+/* ---------------------------------------------------------------- thumbnail and reviews on the video page */
+.thumb-reviews {
+	align-items: start;
+}
+.thumb-card {
+	overflow: clip;
+}
+.thumb-card img,
+.thumb-none {
+	display: block;
+	width: 100%;
+	aspect-ratio: 16 / 9;
+	object-fit: cover;
+	background: var(--table);
+}
+.thumb-none {
+	display: grid;
+	place-content: center;
+	color: var(--lead-soft);
+}
+.thumb-card .soft {
+	text-align: left;
+	padding: 10px 14px 12px;
+	font-size: 0.9rem;
+}

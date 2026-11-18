@@ -75,8 +75,29 @@ export interface RenderRow {
 	warnings?: string[];
 	url?: string;
 	downloadUrl?: string;
+	posterUrl?: string;
 	createdAt: string;
 	finishedAt?: string;
+}
+
+export interface ReviewRow {
+	reviewId: string;
+	round: number;
+	status: "open" | "submitted" | "closed" | "expired";
+	verdict?: "approved" | "changes";
+	summary?: string;
+	reviewer?: string;
+	submittedAt?: string;
+	unread?: true;
+	comments: number;
+	reviewUrl?: string;
+	cutSeconds?: number;
+	expiresAt: string;
+}
+
+export interface ThumbnailInfo {
+	thumbnail: { id: string; url?: string; description?: string; createdAt: string } | null;
+	poster: { url: string; source: "thumbnail" | "render" } | null;
 }
 
 export const ASSET_KINDS = ["image", "video", "audio", "font", "animation"] as const;

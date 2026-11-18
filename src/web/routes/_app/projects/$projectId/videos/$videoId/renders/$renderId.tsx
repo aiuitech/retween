@@ -100,7 +100,7 @@ function RenderPage() {
 					<div className="player" style={render.width && render.height ? { aspectRatio: render.url ? undefined : `${render.width} / ${render.height}`, maxHeight: "70vh" } : undefined}>
 						{render.url ? (
 							// biome-ignore lint/a11y/useMediaCaption: captions are burned into the video
-							<video src={render.url} controls playsInline />
+							<video src={render.url} poster={render.posterUrl} controls playsInline />
 						) : (
 							<div className="pending">
 								{running ? (

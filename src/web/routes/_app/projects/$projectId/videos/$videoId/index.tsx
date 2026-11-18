@@ -2,7 +2,7 @@ import { Link, createFileRoute, getRouteApi, useNavigate } from "@tanstack/react
 import { useState } from "react";
 import { clock, op, plural, sizeOf, usd, when } from "../../../../../../api.ts";
 import { DeleteRender, DeleteVideo, ExportDialog, UploadLine, VideoDialog } from "../../../../../../forms.tsx";
-import type { RenderRow, Scene, VideoDetail, YoutubeUpload } from "../../../../../../types.ts";
+import type { RenderRow, ReviewRow, Scene, ThumbnailInfo, VideoDetail, YoutubeUpload } from "../../../../../../types.ts";
 import { CopyId, Crumbs, Empty, Menu, Status, StatusOf, Tween, isRunning, useAct, usePoll } from "../../../../../../ui.tsx";
 
 const project = getRouteApi("/_app/projects/$projectId");
@@ -10,11 +10,13 @@ const video = getRouteApi("/_app/projects/$projectId/videos/$videoId");
 
 export const Route = createFileRoute("/_app/projects/$projectId/videos/$videoId/")({
 	loader: async ({ params }) => {
-		const [renders, uploads] = await Promise.all([
+		const [renders, uploads, reviews, thumbnail] = await Promise.all([
 			op<{ renders: RenderRow[] }>("render.list", { videoId: params.videoId }),
 			op<{ uploads: YoutubeUpload[] }>("youtube.list", { videoId: params.videoId }).catch(() => ({ uploads: [] })),
+			op<{ reviews: ReviewRow[] }>("review.list", { videoId: params.videoId }).catch(() => ({ reviews: [] })),
+			op<ThumbnailInfo>("thumbnail.get", { videoId: params.videoId }).catch(() => ({ thumbnail: null, poster: null })),
 		]);
-		return { renders: renders.renders, uploads: uploads.uploads };
+		return { renders: renders.renders, uploads: uploads.uploads, reviews: reviews.reviews, thumbnail };
 	},
 	component: VideoPage,
 });
@@ -22,7 +24,7 @@ export const Route = createFileRoute("/_app/projects/$projectId/videos/$videoId/
 function VideoPage() {
 	const { project: parent } = project.useLoaderData();
 	const { video: current } = video.useLoaderData();
-	const { renders, uploads } = Route.useLoaderData();
+	const { renders, uploads, reviews, thumbnail } = Route.useLoaderData();
 	const navigate = useNavigate();
 	const { busy, act } = useAct();
 	const [dialog, setDialog] = useState<"edit" | "delete" | "export" | null>(null);
@@ -179,6 +181,57 @@ function VideoPage() {
 						))}
 					</div>
 				)}
+			</div>
+
+			<div className="block">
+				<div className="block-head">
+					<div>
+						<h2>Thumbnail and reviews</h2>
+						<p>The thumbnail goes up with the video and is its poster. Reviews are rounds of notes from the person (or anyone with the link) on a cut, which your agent reads and answers.</p>
+					</div>
+				</div>
+				<div className="with-aside thumb-reviews">
+					{reviews.length === 0 ? (
+						<Empty title="No reviews yet">When the video is ready to look at, your agent sends a link where you watch it and leave notes on moments or scenes.</Empty>
+					) : (
+						<div className="lines">
+							{reviews.map((review) => (
+								<div className="line go" key={review.reviewId}>
+									<div className="grow">
+										<a className="cover title" href={review.reviewUrl ?? `/review/${review.reviewId}`}>
+											Round {review.round}
+										</a>
+										<div className="facts">
+											<span>{plural(review.comments, "note")}</span>
+											{review.reviewer && <span>from {review.reviewer}</span>}
+											{review.submittedAt && <span>{when(review.submittedAt)}</span>}
+											{review.summary && <span>{review.summary.length > 80 ? `${review.summary.slice(0, 78)}…` : review.summary}</span>}
+										</div>
+									</div>
+									{review.status === "submitted" ? (
+										<Status tone={review.verdict === "approved" ? "ok" : "warn"}>{review.verdict === "approved" ? "Approved" : "Changes asked"}</Status>
+									) : review.status === "open" ? (
+										<Status tone="busy">Waiting for notes</Status>
+									) : (
+										<Status>{review.status === "expired" ? "Expired" : "Replaced"}</Status>
+									)}
+								</div>
+							))}
+						</div>
+					)}
+					<div className="cel thumb-card">
+						{thumbnail.thumbnail?.url ? (
+							<img src={thumbnail.thumbnail.url} alt={thumbnail.thumbnail.description ? `Thumbnail: ${thumbnail.thumbnail.description}` : "The video's thumbnail"} />
+						) : thumbnail.poster ? (
+							<img src={thumbnail.poster.url} alt="The opening of the latest export, used as the poster" />
+						) : (
+							<div className="thumb-none">No thumbnail yet</div>
+						)}
+						<p className="soft">
+							{thumbnail.thumbnail ? "Designed with thumbnail.design." : thumbnail.poster ? "No thumbnail yet: the opening of the latest export stands in. Ask your agent to design one." : "Ask your agent to design one (thumbnail.design)."}
+						</p>
+					</div>
+				</div>
 			</div>
 
 			{current.spend.byKind.length > 0 && (
