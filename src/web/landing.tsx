@@ -2,12 +2,10 @@ import { type CSSProperties, type ReactNode, useEffect, useRef } from "react";
 import { ELEVENLABS_VOICE_MODELS } from "../../shared/audio-models.ts";
 import { ELEVENLABS, FAL_LIST_USD, containerUsdPerSecond } from "../worker/services/pricing.ts";
 import { Wordmark } from "./public.tsx";
+import type { PublicPricing } from "./rpc.ts";
 import { signIn } from "./session.ts";
 
 const SOURCE_URL = "https://github.com/aiuitech/retween";
-
-/** What the hosted copy adds to vendor cost. Keep in line with BILLING_MARKUP in cloudflare.config.ts. */
-const MARKUP = 0.4;
 
 /** The storyboard an agent might write for a coffee roaster. The times are what the recorded voice gives back. */
 const SCENES = [
@@ -21,34 +19,55 @@ const TOTAL_SEC = SCENES.reduce((sum, scene) => sum + scene.sec, 0);
 const CHARACTERS = SCENES.reduce((sum, scene) => sum + scene.said.length, 0);
 const stamp = (seconds: number) => `0:${String(seconds).padStart(2, "0")}`;
 
-/**
- * Vendor rates, taken from the same tables billing uses where a vendor has a list price.
- * Stills are priced per request by the vendor; this is what they have averaged.
- */
-const RATE = {
-	voicePer1k: ELEVENLABS_VOICE_MODELS.find((model) => model.id === "eleven_multilingual_v2")?.usdPer1kCharacters ?? 0.08,
-	still: 0.045,
-	cutout: FAL_LIST_USD["fal-ai/birefnet/v2"] ?? 0.003,
-	musicPerMinute: ELEVENLABS.musicUsdPerMinute,
-	renderPerSecond: containerUsdPerSecond(),
-};
-/** A 1080p render takes about 1.2 times the video's length, plus a few seconds to start. */
-const RENDER_SEC = Math.round(TOTAL_SEC * 1.2) + 4;
-
-/** Each line is rounded to a tenth of a cent before it is added, so the receipt sums the way it reads. */
-const line = (item: string, detail: string, usd: number) => ({ item, detail, usd: Math.round(usd * 1000) / 1000 });
-const RECEIPT = [
-	line("Narration", `${CHARACTERS} characters`, (CHARACTERS / 1000) * RATE.voicePer1k),
-	line("Stills", "2 generated", 2 * RATE.still),
-	line("Stock clip", "1, free to use", 0),
-	line("Cut-out", "1 subject", RATE.cutout),
-	line("Music", `${TOTAL_SEC} seconds`, (TOTAL_SEC / 60) * RATE.musicPerMinute),
-	line("Render", `${RENDER_SEC} s of machine time`, RENDER_SEC * RATE.renderPerSecond),
-];
-const COST = RECEIPT.reduce((sum, entry) => sum + entry.usd, 0);
 const mills = (usd: number) => `$${usd.toFixed(3)}`;
 /** 0.3¢, 4.5¢, 15¢: a decimal only while it says something. */
 const cents = (usd: number) => `${Number((usd * 100).toFixed(usd < 0.1 ? 1 : 0))}¢`;
+const money = (usd: number) => (usd < 1 ? cents(usd) : `$${usd.toFixed(2)}`);
+
+/** Used until this copy of Retween has made enough to measure its own: a still at about 4.5¢, a render at 1.2 times the video's length plus start-up. */
+const UNMEASURED = { still: 0.045, renderSeconds: (videoSeconds: number) => videoSeconds * 1.2 + 4 };
+
+/**
+ * Every figure the page states, from one place. Unit prices come from the tables billing
+ * uses, the markup from the server's configuration, and what has no list price (a still,
+ * how long a render runs, what a finished minute comes to) from this copy's own ledger.
+ */
+function figures(pricing: PublicPricing) {
+	const rate = {
+		voicePer1k: ELEVENLABS_VOICE_MODELS.find((model) => model.id === "eleven_multilingual_v2")?.usdPer1kCharacters ?? 0.08,
+		still: pricing.usdPerStill ?? UNMEASURED.still,
+		cutout: FAL_LIST_USD["fal-ai/birefnet/v2"] ?? 0.003,
+		musicPerMinute: ELEVENLABS.musicUsdPerMinute,
+		renderPerSecond: containerUsdPerSecond(),
+	};
+	const renderSec = Math.round(pricing.renderSecondsPerVideoSecond === null ? UNMEASURED.renderSeconds(TOTAL_SEC) : TOTAL_SEC * pricing.renderSecondsPerVideoSecond);
+	// Each line is rounded to a tenth of a cent before it is added, so the receipt sums the way it reads.
+	const line = (item: string, detail: string, usd: number) => ({ item, detail, usd: Math.round(usd * 1000) / 1000 });
+	const receipt = [
+		line("Narration", `${CHARACTERS} characters`, (CHARACTERS / 1000) * rate.voicePer1k),
+		line("Stills", "2 generated", 2 * rate.still),
+		line("Stock clip", "1, free to use", 0),
+		line("Cut-out", "1 subject", rate.cutout),
+		line("Music", `${TOTAL_SEC} seconds`, (TOTAL_SEC / 60) * rate.musicPerMinute),
+		line("Render", `${renderSec} s of machine time`, renderSec * rate.renderPerSecond),
+	];
+	const measured = [pricing.usdPerStill !== null && "the price of a still", pricing.renderSecondsPerVideoSecond !== null && "the length of a render"].filter(
+		(name): name is string => Boolean(name),
+	);
+	return {
+		rate,
+		receipt,
+		cost: receipt.reduce((sum, entry) => sum + entry.usd, 0),
+		/** The part Retween adds, as a fraction of cost and as the percentage the page prints: 0.4 and "40%". */
+		share: pricing.markup - 1,
+		pct: `${Number(((pricing.markup - 1) * 100).toFixed(1))}%`,
+		measured,
+		renderRatio: pricing.renderSecondsPerVideoSecond,
+		perMinute: pricing.usdPerVideoMinute,
+		windowDays: pricing.windowDays,
+	};
+}
+type Figures = ReturnType<typeof figures>;
 
 /** The sheets of glass, back to front. `step` is the part of the story that lights each one. */
 const PLANES = ["backdrop", "subject", "leaves", "type", "captions", "board"] as const;
@@ -56,13 +75,13 @@ type Plane = (typeof PLANES)[number];
 const STEP_OF: Record<Plane, number> = { board: 1, backdrop: 2, subject: 2, leaves: 2, type: 3, captions: 4 };
 
 /** The price label on each sheet's top edge, staggered like index tabs so every one can be read. */
-const TABS: Partial<Record<Plane, { label: string; at: string }>> = {
-	backdrop: { label: `still ${cents(RATE.still)}`, at: "4%" },
-	subject: { label: `cut-out ${cents(RATE.cutout)}`, at: "24%" },
+const tabs = ({ rate }: Figures): Partial<Record<Plane, { label: string; at: string }>> => ({
+	backdrop: { label: `still ${cents(rate.still)}`, at: "4%" },
+	subject: { label: `cut-out ${cents(rate.cutout)}`, at: "24%" },
 	type: { label: "type 0¢", at: "47%" },
-	captions: { label: `voice ${cents(RATE.voicePer1k)} / 1k`, at: "62%" },
+	captions: { label: `voice ${cents(rate.voicePer1k)} / 1k`, at: "62%" },
 	board: { label: "storyboard 0¢", at: "83%" },
-};
+});
 
 const img = (name: string) => `/landing/${name}.webp`;
 
@@ -137,7 +156,8 @@ function PlaneArt({ plane }: { plane: Plane }) {
  * closes the stack into the finished frame. Everything moves through CSS variables
  * set on the page root, so the picture is complete before any script runs.
  */
-function Multiplane() {
+function Multiplane({ figures }: { figures: Figures }) {
+	const labels = tabs(figures);
 	return (
 		<div className="mp" aria-hidden="true">
 			<div className="mp-rig">
@@ -152,9 +172,9 @@ function Multiplane() {
 						<div className="mp-art">
 							<PlaneArt plane={plane} />
 						</div>
-						{TABS[plane] && (
-							<span className="mp-tab" style={{ "--at": TABS[plane]!.at } as CSSProperties}>
-								<Price>{TABS[plane]!.label}</Price>
+						{labels[plane] && (
+							<span className="mp-tab" style={{ "--at": labels[plane].at } as CSSProperties}>
+								<Price>{labels[plane].label}</Price>
 							</span>
 						)}
 					</div>
@@ -207,7 +227,7 @@ function Thumb({ index }: { index: number }) {
 	return <div className={`frame kind-${scene.type.toLowerCase()}`}>{art}</div>;
 }
 
-const STEPS: { title: string; price: ReactNode; body: ReactNode }[] = [
+const steps = ({ rate, renderRatio }: Figures): { title: string; price: ReactNode; body: ReactNode }[] => [
 	{
 		title: "It starts as a storyboard",
 		price: <Price>0¢</Price>,
@@ -220,10 +240,10 @@ const STEPS: { title: string; price: ReactNode; body: ReactNode }[] = [
 	},
 	{
 		title: "Pictures",
-		price: <Price>{cents(RATE.still)} a generated still</Price>,
+		price: <Price>{cents(rate.still)} a generated still</Price>,
 		body: (
 			<>
-				Your own files and free stock cost nothing. A generated still is about {cents(RATE.still)}. For {cents(RATE.cutout)} more, the subject is cut out onto its own layer so
+				Your own files and free stock cost nothing. A generated still is about {cents(rate.still)}. For {cents(rate.cutout)} more, the subject is cut out onto its own layer so
 				the camera can move through the shot, which is the stack you are looking at.
 			</>
 		),
@@ -237,21 +257,24 @@ const STEPS: { title: string; price: ReactNode; body: ReactNode }[] = [
 	},
 	{
 		title: "Voice",
-		price: <Price>{cents(RATE.voicePer1k)} per 1,000 characters</Price>,
+		price: <Price>{cents(rate.voicePer1k)} per 1,000 characters</Price>,
 		body: (
 			<>
 				Narration is recorded first, and everything else is timed to it: scene lengths, captions, when each bullet lands, when the music ducks. The default voice is{" "}
-				{cents(RATE.voicePer1k)} per 1,000 characters, and the cheapest is under a tenth of a cent. Music is about {cents(RATE.musicPerMinute)} a minute.
+				{cents(rate.voicePer1k)} per 1,000 characters, and the cheapest is under a tenth of a cent. Music is about {cents(rate.musicPerMinute)} a minute.
 			</>
 		),
 	},
 	{
 		title: "Render",
-		price: <Price>{cents(RATE.renderPerSecond * 60)} a minute</Price>,
+		price: <Price>{cents(rate.renderPerSecond * 60)} a minute</Price>,
 		body: (
 			<>
-				A container renders the timeline to MP4 at 16:9, 9:16, 1:1 or 4:5, up to 4K. It is billed by the second while it runs, about {cents(RATE.renderPerSecond * 60)} a
-				minute, and a 1080p video takes roughly as long to render as it does to watch.
+				A container renders the timeline to MP4 at 16:9, 9:16, 1:1 or 4:5, up to 4K. It is billed by the second while it runs, about {cents(rate.renderPerSecond * 60)} a
+				minute.{" "}
+				{renderRatio === null
+					? "A 1080p video takes roughly as long to render as it does to watch."
+					: `Lately it has run for ${Number(renderRatio.toFixed(1))} seconds for each second of video, start-up included.`}
 			</>
 		),
 	},
@@ -323,8 +346,10 @@ function useStage() {
 	return root;
 }
 
-export function Landing({ connecting, next }: { connecting?: boolean; next?: string }) {
+export function Landing({ pricing, connecting, next }: { pricing: PublicPricing; connecting?: boolean; next?: string }) {
 	const root = useStage();
+	const f = figures(pricing);
+	const { pct } = f;
 	const enter = () => signIn(next);
 	let at = 0;
 	const starts = SCENES.map((scene) => {
@@ -348,7 +373,7 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 			<main>
 				<section className="story">
 					<div className="story-stage">
-						<Multiplane />
+						<Multiplane figures={f} />
 					</div>
 					<div className="story-copy">
 						<div className="step opener" data-step="0">
@@ -356,7 +381,7 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 							<p className="lede">
 								{connecting
 									? "An app is asking to make videos with your Retween account. Sign in to review the request."
-									: "Retween is an open-source video studio that your agent operates. Give it a storyboard and it voices the script, finds or generates the pictures, times every scene to the recording and renders the video. You pay what that video cost to make, plus 40%."}
+									: `Retween is an open-source video studio that your agent operates. Give it a storyboard and it voices the script, finds or generates the pictures, times every scene to the recording and renders the video. You pay what that video cost to make, plus ${pct}.`}
 							</p>
 							<div className="enter">
 								<button type="button" className="btn big" onClick={enter}>
@@ -366,7 +391,7 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 							</div>
 							<p className="terms">No plan to choose. You add a card, set a monthly cap, and are billed for what you made.</p>
 						</div>
-						{STEPS.map((step, i) => (
+						{steps(f).map((step, i) => (
 							<div key={step.title} className="step" data-step={i + 1}>
 								<h2>{step.title}</h2>
 								{step.price}
@@ -399,47 +424,61 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 					</ol>
 
 					<div className="bill">
-						<div className="receipt">
-							<p className="receipt-head">
-								<span>retween</span>
-								<span>
-									{stamp(TOTAL_SEC)}, 1080p
-								</span>
-							</p>
-							<table>
-								<tbody>
-									{RECEIPT.map((line) => (
-										<tr key={line.item}>
-											<th scope="row">
-												{line.item}
-												<small>{line.detail}</small>
-											</th>
-											<td>{mills(line.usd)}</td>
+						<div>
+							<div className="receipt">
+								<p className="receipt-head">
+									<span>retween</span>
+									<span>
+										{stamp(TOTAL_SEC)}, 1080p
+									</span>
+								</p>
+								<table>
+									<tbody>
+										{f.receipt.map((line) => (
+											<tr key={line.item}>
+												<th scope="row">
+													{line.item}
+													<small>{line.detail}</small>
+												</th>
+												<td>{mills(line.usd)}</td>
+											</tr>
+										))}
+									</tbody>
+									<tbody className="sums">
+										<tr>
+											<th scope="row">What the vendors charged</th>
+											<td>{mills(f.cost)}</td>
 										</tr>
-									))}
-								</tbody>
-								<tbody className="sums">
-									<tr>
-										<th scope="row">What the vendors charged</th>
-										<td>{mills(COST)}</td>
-									</tr>
-									<tr className="ours">
-										<th scope="row">
-											<mark>Retween, 40%</mark>
-										</th>
-										<td>
-											<mark>{mills(COST * MARKUP)}</mark>
-										</td>
-									</tr>
-								</tbody>
-								<tfoot>
-									<tr>
-										<th scope="row">You pay</th>
-										<td>${(COST * (1 + MARKUP)).toFixed(2)}</td>
-									</tr>
-								</tfoot>
-							</table>
-							<p className="receipt-foot">An example at November 2026 vendor rates. In your account, every video shows its own.</p>
+										<tr className="ours">
+											<th scope="row">
+												<mark>Retween, {pct}</mark>
+											</th>
+											<td>
+												<mark>{mills(f.cost * f.share)}</mark>
+											</td>
+										</tr>
+									</tbody>
+									<tfoot>
+										<tr>
+											<th scope="row">You pay</th>
+											<td>${(f.cost * (1 + f.share)).toFixed(2)}</td>
+										</tr>
+									</tfoot>
+								</table>
+								<p className="receipt-foot">
+									An example at today's vendor rates.
+									{f.measured.length > 0 &&
+										` ${f.measured.join(" and ").replace(/^t/, "T")} ${f.measured.length > 1 ? "are" : "is"} what this site has averaged over the last ${f.windowDays} days.`}{" "}
+									In your account, every video shows its own.
+								</p>
+							</div>
+							{f.perMinute !== null && (
+								<p className="average">
+									Across every video rendered here in the last {f.windowDays} days, a finished minute has cost <strong>{money(f.perMinute)}</strong> to make, or{" "}
+									<strong>{money(f.perMinute * (1 + f.share))}</strong> with the {pct}. That average counts everything spent on a video: retakes, replaced pictures and every
+									render.
+								</p>
+							)}
 						</div>
 
 						<div className="why">
@@ -453,11 +492,11 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 								open source and this site is a hosted copy of it.
 							</p>
 							<p>
-								The hosted copy charges what each video cost to make, plus 40%. The 40% is for convenience: you skip setting up the vendor accounts, the renderer and the
+								The hosted copy charges what each video cost to make, plus {pct}. The {pct} is for convenience: you skip setting up the vendor accounts, the renderer and the
 								deployment. It is not a business model. I built this for my own work and would be running it either way.
 							</p>
 							<p>
-								If you make one or two videos and never come back, you pay for one or two videos. If you would rather not pay the 40%, host it yourself and pay your vendors
+								If you make one or two videos and never come back, you pay for one or two videos. If you would rather not pay the {pct}, host it yourself and pay your vendors
 								directly.
 							</p>
 						</div>
@@ -473,7 +512,7 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 									<td />
 									<th scope="col">
 										Hosted, at retween.app
-										<Price ours>cost + 40%</Price>
+										<Price ours>cost + {pct}</Price>
 									</th>
 									<th scope="col">
 										Self-hosted
@@ -484,7 +523,7 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 							<tbody>
 								<tr>
 									<th scope="row">What you pay</th>
-									<td>What the vendors charged for your videos, plus 40%. One bill a month, with a spend cap that starts at $10.</td>
+									<td>What the vendors charged for your videos, plus {pct}. One bill a month, with a spend cap that starts at $10.</td>
 									<td>What the vendors charge, on your own accounts with them.</td>
 								</tr>
 								<tr>
@@ -495,7 +534,7 @@ export function Landing({ connecting, next }: { connecting?: boolean; next?: str
 								<tr>
 									<th scope="row">When it fits</th>
 									<td>You want a video today, or a few a month, without running anything.</td>
-									<td>You make enough video for the 40% to matter, or you want to change how it works.</td>
+									<td>You make enough video for the {pct} to matter, or you want to change how it works.</td>
 								</tr>
 								<tr>
 									<th scope="row">Start</th>

@@ -533,6 +533,15 @@
 	margin-top: 18px;
 	color: var(--lead-soft);
 }
+.average {
+	margin-top: 40px;
+	font-size: 0.97rem;
+	color: var(--lead);
+}
+.average strong {
+	font-weight: 650;
+	color: var(--graphite);
+}
 .why {
 	display: grid;
 	gap: 16px;

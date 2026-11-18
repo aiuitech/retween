@@ -1,6 +1,7 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { Landing } from "../landing.tsx";
 import landingStyles from "../landing.css?url";
+import { getPricing } from "../rpc.ts";
 import { safePath } from "../session.ts";
 
 /**
@@ -13,10 +14,11 @@ export const Route = createFileRoute("/sign-in")({
 		if (context.me && !search.client_id) throw redirect({ href: safePath(search.redirect) ?? "/projects" });
 	},
 	head: () => ({ links: [{ rel: "stylesheet", href: landingStyles }] }),
+	loader: () => getPricing(),
 	component: SignIn,
 });
 
 function SignIn() {
 	const search = Route.useSearch();
-	return <Landing connecting={Boolean(search.client_id)} next={safePath(search.redirect)} />;
+	return <Landing pricing={Route.useLoaderData()} connecting={Boolean(search.client_id)} next={safePath(search.redirect)} />;
 }

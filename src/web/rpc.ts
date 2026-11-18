@@ -1,5 +1,5 @@
 /**
- * The web app's two server functions. Pages are rendered on the server, so
+ * The web app's server functions. Pages are rendered on the server, so
  * they cannot fetch the REST API with the browser's cookies; these run the
  * same operations in-process during rendering and over RPC afterwards.
  */
@@ -9,6 +9,8 @@ import { actorFromRequest, assertActive } from "../worker/auth/index.ts";
 import { AppError } from "../worker/lib/util.ts";
 import { runOp } from "../worker/ops/index.ts";
 import { INLINE_IMAGE } from "../worker/ops/registry.ts";
+import { type Averages, averages } from "../worker/services/averages.ts";
+import { markup } from "../worker/services/billing.ts";
 import { budgetStatus } from "../worker/services/usage.ts";
 
 export interface Me {
@@ -46,6 +48,15 @@ export const getMe = createServerFn({ method: "GET" }).handler(async (): Promise
 		budget: await budgetStatus(actor),
 	};
 });
+
+/** What the public page states about money: the configured markup, and what things have cost here lately. */
+export interface PublicPricing extends Averages {
+	/** What people pay per dollar of vendor cost (BILLING_MARKUP), e.g. 1.4. */
+	markup: number;
+}
+
+/** Open to everyone: the markup is the published price, and the averages are totals across all accounts. */
+export const getPricing = createServerFn({ method: "GET" }).handler(async (): Promise<PublicPricing> => ({ ...(await averages()), markup: markup() }));
 
 /** The address this site is being served from, for the commands the Connect page shows. */
 export const getOrigin = createServerFn({ method: "GET" }).handler(async () => new URL(getRequest().url).origin);

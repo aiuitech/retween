@@ -13,7 +13,7 @@ export const Route = createRootRoute({
 		meta: [
 			{ charSet: "utf-8" },
 			{ name: "viewport", content: "width=device-width, initial-scale=1" },
-			{ name: "description", content: "Retween is an open-source video studio your agent operates over MCP or the command line. Pay what each video cost to make plus 40%, or host it yourself at cost." },
+			{ name: "description", content: "Retween is an open-source video studio your agent operates over MCP or the command line. Pay what each video cost to make plus a published markup, or host it yourself at cost." },
 			{ title: "Retween" },
 		],
 		links: [
