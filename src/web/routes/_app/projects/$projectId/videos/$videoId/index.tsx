@@ -1,6 +1,7 @@
 import { Link, createFileRoute, getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { clock, op, plural, sizeOf, usd, when } from "../../../../../../api.ts";
+import { DraftBlock, useDraft } from "../../../../../../draft.tsx";
 import { DeleteRender, DeleteVideo, ExportDialog, UploadLine, VideoDialog } from "../../../../../../forms.tsx";
 import { HostingBlock, useHostingDialogs } from "../../../../../../hosting.tsx";
 import type { HostedVideo, RenderRow, ReviewRow, ThumbnailInfo, VideoDetail, YoutubeUpload } from "../../../../../../types.ts";
@@ -37,6 +38,14 @@ function VideoPage() {
 	const preparing = current.status === "preparing";
 	usePoll(preparing || [...renders, ...uploads, ...hosted].some((item) => isRunning(item.status)));
 
+	const draft = useDraft(current);
+	const canCut = parent.role !== "viewer";
+	const watchDraft = () => {
+		document.getElementById("draft")?.scrollIntoView({ behavior: "smooth", block: "start" });
+		// Only cut when there is nothing current to watch; otherwise just show it.
+		if (!draft.needsRange && (!draft.kept || draft.stale || draft.status === "failed")) void draft.cut();
+	};
+
 	const { pipeline } = current;
 	const scenes = current.storyboard.scenes;
 	return (
@@ -66,6 +75,16 @@ function VideoPage() {
 					{current.brief && <p>{current.brief}</p>}
 				</div>
 				<div className="acts">
+					{canCut && (
+						<button
+							type="button"
+							className="btn quiet"
+							disabled={preparing || scenes.length === 0 || draft.starting || draft.status === "rendering" || draft.status === "loading"}
+							onClick={watchDraft}
+						>
+							Watch draft
+						</button>
+					)}
 					<button type="button" className="btn" disabled={preparing || scenes.length === 0} onClick={() => setDialog("export")}>
 						Export video
 					</button>
@@ -106,6 +125,8 @@ function VideoPage() {
 						: "This video has not been prepared yet. Preparing it records the narration, makes the pictures and times every scene."}
 				</p>
 			)}
+
+			{scenes.length > 0 && <DraftBlock video={current} draft={draft} canCut={canCut} blocked={preparing} />}
 
 			<div className="block">
 				<div className="block-head">
