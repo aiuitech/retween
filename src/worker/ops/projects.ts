@@ -8,7 +8,8 @@ import { deletePrefix } from "../services/storage.ts";
 import { removeHostedFor } from "../services/hosting.ts";
 import { WORKFLOW_GUIDE, projectBrief } from "../services/brief.ts";
 import { CRAFT, CRAFT_TOPICS, craftTopic } from "../services/craft.ts";
-import { brandCompleteness, getProject, listProjects, projectSummary } from "../services/projects.ts";
+import { brandCompleteness, getProject, listProjects, projectSummary, roleFor } from "../services/projects.ts";
+import { assertNotGuest } from "../auth/index.ts";
 import { describeControls } from "../../../shared/controls.ts";
 import { getControls } from "../services/controls.ts";
 import { budgetStatus } from "../services/usage.ts";
@@ -68,7 +69,9 @@ export const projectOps = [
 	defineOp({
 		name: "project.list",
 		title: "List projects",
-		description: "Your projects, most recently updated first. A project holds one brand's kit, assets and videos.",
+		description:
+			"Your projects, then projects shared with you, each most recently updated first. A project holds one brand's kit, assets and videos. " +
+			"role says what you can do in each: owner, editor (everything but deleting it and sharing it) or viewer (read only).",
 		input: z.object({}),
 		readOnly: true,
 		handler: async (_input, { actor }) => ({ projects: await listProjects(actor) }),
@@ -88,13 +91,14 @@ export const projectOps = [
 				.describe("Initial brand kit, any subset. Same shape as brand.update's patch; see brand.schema for every field"),
 		}),
 		handler: async (input, { actor }) => {
+			assertNotGuest(actor, "create projects of your own");
 			const brand = BrandKit.safeParse(input.brand ?? {});
 			if (!brand.success) throw badRequest("That does not fit the brand kit", z.treeifyError(brand.error));
 			const [project] = await db
 				.insert(schema.projects)
 				.values({ id: newId("prj"), ownerId: actor.id, name: input.name, description: input.description, brand: brand.data })
 				.returning();
-			return { project: await projectSummary(project!), brandKit: brandCompleteness(project!.brand) };
+			return { project: { ...(await projectSummary(project!)), role: "owner" }, brandKit: brandCompleteness(project!.brand) };
 		},
 	}),
 
@@ -106,7 +110,10 @@ export const projectOps = [
 		readOnly: true,
 		handler: async (input, { actor }) => {
 			const project = await getProject(actor, input.projectId);
-			return { project: { ...(await projectSummary(project)), brand: project.brand }, brandKit: brandCompleteness(project.brand) };
+			return {
+				project: { ...(await projectSummary(project)), role: await roleFor(actor, project), brand: project.brand },
+				brandKit: brandCompleteness(project.brand),
+			};
 		},
 	}),
 
@@ -129,11 +136,11 @@ export const projectOps = [
 	defineOp({
 		name: "project.delete",
 		title: "Delete project",
-		description: "Permanently delete a project with all of its assets, videos, renders and hosted videos. Cannot be undone.",
+		description: "Permanently delete a project with all of its assets, videos, renders and hosted videos (owner only). Cannot be undone.",
 		input: z.object({ projectId, confirm: z.literal(true).describe("Must be true") }),
 		destructive: true,
 		handler: async (input, { actor }) => {
-			const project = await getProject(actor, input.projectId);
+			const project = await getProject(actor, input.projectId, "owner");
 			// Everything a project stores lives under one prefix: assets, renders and preview frames.
 			const files = await deletePrefix(`projects/${project.id}/`);
 			await removeHostedFor({ projectId: project.id });

@@ -16,6 +16,7 @@ function Settings() {
 	const [description, setDescription] = useState(current.description ?? "");
 	const [deleting, setDeleting] = useState(false);
 	const changed = name.trim() !== current.name || description !== (current.description ?? "");
+	const readOnly = current.role === "viewer";
 	return (
 		<div className="page narrow" style={{ padding: 0, margin: 0 }}>
 			<h2>Settings</h2>
@@ -28,13 +29,13 @@ function Settings() {
 				}}
 			>
 				<Field label="Name">
-					<input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required />
+					<input value={name} onChange={(event) => setName(event.target.value)} maxLength={120} required disabled={readOnly} />
 				</Field>
 				<Field label="What it is for" hint="A line your agent reads before making anything in this project.">
-					<textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={2000} />
+					<textarea value={description} onChange={(event) => setDescription(event.target.value)} maxLength={2000} disabled={readOnly} />
 				</Field>
 				<div>
-					<button type="submit" className="btn" disabled={busy || !changed || !name.trim()}>
+					<button type="submit" className="btn" disabled={busy || readOnly || !changed || !name.trim()}>
 						Save changes
 					</button>
 				</div>
@@ -58,17 +59,19 @@ function Settings() {
 				</div>
 			</div>
 
-			<div className="block">
-				<h2>Delete project</h2>
-				<div className="cel pad danger-zone" style={{ marginTop: 12, display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
-					<p className="soft" style={{ flex: "1 1 320px" }}>
-						Deletes the brand kit, every file and every video in this project, including exports. This cannot be undone.
-					</p>
-					<button type="button" className="btn danger" onClick={() => setDeleting(true)}>
-						Delete project
-					</button>
+			{current.role === "owner" && (
+				<div className="block">
+					<h2>Delete project</h2>
+					<div className="cel pad danger-zone" style={{ marginTop: 12, display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
+						<p className="soft" style={{ flex: "1 1 320px" }}>
+							Deletes the brand kit, every file and every video in this project, including exports. This cannot be undone.
+						</p>
+						<button type="button" className="btn danger" onClick={() => setDeleting(true)}>
+							Delete project
+						</button>
+					</div>
 				</div>
-			</div>
+			)}
 			<DeleteProject open={deleting} onClose={() => setDeleting(false)} project={current} onDeleted={() => navigate({ to: "/projects" })} />
 		</div>
 	);

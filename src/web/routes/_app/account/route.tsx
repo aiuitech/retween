@@ -21,6 +21,9 @@ function Account() {
 					<Link to="/account/sessions" activeProps={here}>
 						Sessions
 					</Link>
+					<Link to="/account/notifications" activeProps={here}>
+						Notifications
+					</Link>
 				</nav>
 				<div className="main">
 					<Outlet />

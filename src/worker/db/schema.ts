@@ -631,3 +631,105 @@ export const videoCheckpoints = sqliteTable(
 	},
 	(t) => [index("video_checkpoints_video_idx").on(t.videoId, t.createdAt)],
 );
+
+/**
+ * What someone other than the owner may do in a project:
+ * editor: everything the owner can, except deleting the project and changing who has access.
+ * viewer: read everything (brief, storyboards, files, exports, checks), change nothing.
+ * The owner is `projects.owner_id` and has no row here.
+ */
+export const PROJECT_ROLES = ["editor", "viewer"] as const;
+export type MemberRole = (typeof PROJECT_ROLES)[number];
+
+/** People a project is shared with. Whoever starts paid work is billed for it; the owner is billed for storage. */
+export const projectMembers = sqliteTable(
+	"project_members",
+	{
+		projectId: text("project_id")
+			.notNull()
+			.references(() => projects.id, { onDelete: "cascade" }),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		role: text("role").$type<MemberRole>().notNull(),
+		/** Who shared it (the owner, or an administrator). */
+		addedBy: text("added_by"),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [uniqueIndex("project_members_project_user_idx").on(t.projectId, t.userId), index("project_members_user_idx").on(t.userId)],
+);
+
+/**
+ * An invitation to a project for an email address with no account yet. It
+ * becomes a membership when someone signs up with that address (automatically),
+ * or signs in and accepts the link. The link's token is an HMAC of the id, so it is not stored.
+ * Pending invitations have no `accepted_at`.
+ */
+export const projectInvites = sqliteTable(
+	"project_invites",
+	{
+		id: text("id").primaryKey(),
+		projectId: text("project_id")
+			.notNull()
+			.references(() => projects.id, { onDelete: "cascade" }),
+		/** Lower-cased. */
+		email: text("email").notNull(),
+		role: text("role").$type<MemberRole>().notNull(),
+		invitedBy: text("invited_by")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		/** When the invitation email was last sent. */
+		sentAt: integer("sent_at", { mode: "timestamp_ms" }),
+		expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+		/** Kept after acceptance, so the link can still lead its person to the project. */
+		acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
+		acceptedBy: text("accepted_by"),
+		createdAt: createdAt(),
+		updatedAt: updatedAt(),
+	},
+	(t) => [uniqueIndex("project_invites_project_email_idx").on(t.projectId, t.email), index("project_invites_email_idx").on(t.email)],
+);
+
+export const NOTIFICATION_KINDS = [
+	"project.shared",
+	"project.access_changed",
+	"invite.accepted",
+	"review.submitted",
+	"render.finished",
+	"render.failed",
+] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+
+/** Something that happened that a person should hear about: shown in the web app, and emailed unless they turned that kind off. */
+export const notifications = sqliteTable(
+	"notifications",
+	{
+		id: text("id").primaryKey(),
+		userId: text("user_id")
+			.notNull()
+			.references(() => user.id, { onDelete: "cascade" }),
+		kind: text("kind").$type<NotificationKind>().notNull(),
+		title: text("title").notNull(),
+		body: text("body"),
+		/** A path in the web app, e.g. /projects/prj_…/videos/vid_… */
+		link: text("link"),
+		projectId: text("project_id"),
+		/** Who caused it, when it was a person. */
+		actorId: text("actor_id"),
+		readAt: integer("read_at", { mode: "timestamp_ms" }),
+		/** When it was emailed; empty when email was off for this kind or sending failed. */
+		emailedAt: integer("emailed_at", { mode: "timestamp_ms" }),
+		createdAt: createdAt(),
+	},
+	(t) => [index("notifications_user_idx").on(t.userId, t.createdAt)],
+);
+
+/** Which notifications a person gets by email. Only kinds they changed from the default are stored. */
+export const notificationSettings = sqliteTable("notification_settings", {
+	userId: text("user_id")
+		.primaryKey()
+		.references(() => user.id, { onDelete: "cascade" }),
+	email: text("email", { mode: "json" }).$type<Partial<Record<NotificationKind, boolean>>>().notNull().default({}),
+	updatedAt: updatedAt(),
+});

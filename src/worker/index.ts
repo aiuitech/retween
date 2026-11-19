@@ -91,6 +91,8 @@ if (import.meta.env.DEV) {
 					updatedAt: new Date(),
 				})
 				.returning();
+			const { acceptInvitesFor } = await import("./services/sharing.ts");
+			await acceptInvitesFor(user!);
 		}
 		const context = await auth.$context;
 		const session = await context.internalAdapter.createSession(user!.id);

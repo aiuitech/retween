@@ -1,5 +1,7 @@
 /** What the service's operations return, as the pages use them. */
 
+export type ProjectRole = "owner" | "editor" | "viewer";
+
 export interface ProjectRow {
 	id: string;
 	name: string;
@@ -9,6 +11,29 @@ export interface ProjectRow {
 	assets: number;
 	createdAt: string;
 	updatedAt: string;
+	/** What the signed-in person can do in it. */
+	role: ProjectRole;
+	/** Who owns it, when it is shared with the signed-in person. */
+	owner?: { name: string; email: string };
+}
+
+export interface ProjectAccess {
+	you: ProjectRole;
+	owner: { userId: string; name: string; email: string; image: string | null } | null;
+	members: { userId: string; name: string; email: string; image: string | null; role: "editor" | "viewer"; since: string }[];
+	invites?: { id: string; email: string; role: "editor" | "viewer"; sentAt: string | null; expiresAt: string; expired: boolean; link: string }[];
+}
+
+export interface NotificationRow {
+	id: string;
+	kind: string;
+	title: string;
+	body?: string;
+	link?: string;
+	projectId?: string;
+	read: boolean;
+	emailed: boolean;
+	createdAt: string;
 }
 
 export interface VideoRow {

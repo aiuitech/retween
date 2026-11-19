@@ -22,6 +22,11 @@ function ProjectPages() {
 				<div className="words">
 					<h1>{current.name}</h1>
 					{current.description && <p>{current.description}</p>}
+					{current.role === "viewer" && (
+						<p>
+							<span className="tag">View only</span> You can look at everything here and run checks, but not change anything.
+						</p>
+					)}
 				</div>
 				<div className="acts">
 					<CopyId id={current.id} />
@@ -36,6 +41,9 @@ function ProjectPages() {
 				</Link>
 				<Link to="/projects/$projectId/brief" params={params} activeProps={here}>
 					Brief
+				</Link>
+				<Link to="/projects/$projectId/sharing" params={params} activeProps={here}>
+					Sharing
 				</Link>
 				<Link to="/projects/$projectId/settings" params={params} activeProps={here}>
 					Settings

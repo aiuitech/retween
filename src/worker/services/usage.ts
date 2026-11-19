@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { and, eq, gte, sql } from "drizzle-orm";
-import type { Actor } from "../auth/index.ts";
+import { type Actor, assertNotGuest } from "../auth/index.ts";
 import { db, schema } from "../db/client.ts";
 import type { CostBasis, UsageKind } from "../db/schema.ts";
 import { AppError, newId, sha256Hex, startOfMonthUtc } from "../lib/util.ts";
@@ -172,6 +172,7 @@ export async function playbackBlocked(userId: string): Promise<string | null> {
 
 /** Refuses paid work once the month's cap (or the account's own lower limit) is reached, or while an invoice is unpaid. */
 export async function assertBudget(actor: Actor): Promise<void> {
+	assertNotGuest(actor, "start paid work");
 	if (actor.billing === "past_due") {
 		throw new AppError(
 			402,

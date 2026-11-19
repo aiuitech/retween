@@ -85,6 +85,13 @@
       "when": 1795040491535,
       "tag": "0011_hosted_videos",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1795114713356,
+      "tag": "0012_sharing_notifications",
+      "breakpoints": true
     }
   ]
 }

@@ -30,6 +30,9 @@ function App() {
 								Admin
 							</Link>
 						)}
+						<Link to="/notifications" activeProps={here} aria-label={me.unread ? `Inbox, ${me.unread} unread` : "Inbox"}>
+							Inbox{me.unread > 0 && <span className="count unread">{me.unread > 99 ? "99+" : me.unread}</span>}
+						</Link>
 					</nav>
 					<Menu
 						label="Your account"
@@ -54,6 +57,7 @@ function App() {
 						<Link to="/account">Profile</Link>
 						<Link to="/account/spending">Spending</Link>
 						<Link to="/account/sessions">Sessions</Link>
+						<Link to="/account/notifications">Notification emails</Link>
 						<hr />
 						<button type="button" onClick={() => void signOut()}>
 							Sign out
@@ -61,6 +65,13 @@ function App() {
 					</Menu>
 				</div>
 			</header>
+			{me.billing === "guest" && (
+				<div className="page" style={{ paddingBottom: 0 }}>
+					<p className="note">
+						You are working in projects shared with you. To create your own projects or generate, render and publish, <Link to="/billing">add a payment method</Link>.
+					</p>
+				</div>
+			)}
 			{me.billing === "past_due" && (
 				<div className="page" style={{ paddingBottom: 0 }}>
 					<p className="note bad">

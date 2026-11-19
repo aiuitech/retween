@@ -18,8 +18,11 @@ import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as AppAccountRouteRouteImport } from './routes/_app/account/route'
 import { Route as AppAdminRouteImport } from './routes/_app/admin'
 import { Route as AppConnectRouteImport } from './routes/_app/connect'
+import { Route as AppNotificationsRouteImport } from './routes/_app/notifications'
+import { Route as InviteInviteIdRouteImport } from './routes/invite.$inviteId'
 import { Route as ReviewReviewIdRouteImport } from './routes/review.$reviewId'
 import { Route as AppAccountIndexRouteImport } from './routes/_app/account/index'
+import { Route as AppAccountNotificationsRouteImport } from './routes/_app/account/notifications'
 import { Route as AppAccountSessionsRouteImport } from './routes/_app/account/sessions'
 import { Route as AppAccountSpendingRouteImport } from './routes/_app/account/spending'
 import { Route as AppProjectsIndexRouteImport } from './routes/_app/projects/index'
@@ -29,6 +32,7 @@ import { Route as AppProjectsProjectIdTabsIndexRouteImport } from './routes/_app
 import { Route as AppProjectsProjectIdTabsAssetsRouteImport } from './routes/_app/projects/$projectId/_tabs/assets'
 import { Route as AppProjectsProjectIdTabsBriefRouteImport } from './routes/_app/projects/$projectId/_tabs/brief'
 import { Route as AppProjectsProjectIdTabsSettingsRouteImport } from './routes/_app/projects/$projectId/_tabs/settings'
+import { Route as AppProjectsProjectIdTabsSharingRouteImport } from './routes/_app/projects/$projectId/_tabs/sharing'
 import { Route as AppProjectsProjectIdVideosVideoIdRouteRouteImport } from './routes/_app/projects/$projectId/videos/$videoId/route'
 import { Route as AppProjectsProjectIdVideosVideoIdIndexRouteImport } from './routes/_app/projects/$projectId/videos/$videoId/index'
 import { Route as AppProjectsProjectIdVideosVideoIdRendersRenderIdRouteImport } from './routes/_app/projects/$projectId/videos/$videoId/renders/$renderId'
@@ -77,6 +81,16 @@ const AppConnectRoute = AppConnectRouteImport.update({
   path: '/connect',
   getParentRoute: () => AppRoute,
 } as any)
+const AppNotificationsRoute = AppNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => AppRoute,
+} as any)
+const InviteInviteIdRoute = InviteInviteIdRouteImport.update({
+  id: '/invite/$inviteId',
+  path: '/invite/$inviteId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReviewReviewIdRoute = ReviewReviewIdRouteImport.update({
   id: '/review/$reviewId',
   path: '/review/$reviewId',
@@ -85,6 +99,11 @@ const ReviewReviewIdRoute = ReviewReviewIdRouteImport.update({
 const AppAccountIndexRoute = AppAccountIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppAccountRouteRoute,
+} as any)
+const AppAccountNotificationsRoute = AppAccountNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => AppAccountRouteRoute,
 } as any)
 const AppAccountSessionsRoute = AppAccountSessionsRouteImport.update({
@@ -137,6 +156,12 @@ const AppProjectsProjectIdTabsSettingsRoute =
     path: '/settings',
     getParentRoute: () => AppProjectsProjectIdTabsRouteRoute,
   } as any)
+const AppProjectsProjectIdTabsSharingRoute =
+  AppProjectsProjectIdTabsSharingRouteImport.update({
+    id: '/sharing',
+    path: '/sharing',
+    getParentRoute: () => AppProjectsProjectIdTabsRouteRoute,
+  } as any)
 const AppProjectsProjectIdVideosVideoIdRouteRoute =
   AppProjectsProjectIdVideosVideoIdRouteRouteImport.update({
     id: '/videos/$videoId',
@@ -165,8 +190,11 @@ export interface FileRoutesByFullPath {
   '/account': typeof AppAccountRouteRouteWithChildren
   '/admin': typeof AppAdminRoute
   '/connect': typeof AppConnectRoute
+  '/notifications': typeof AppNotificationsRoute
+  '/invite/$inviteId': typeof InviteInviteIdRoute
   '/review/$reviewId': typeof ReviewReviewIdRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRouteRouteWithChildren
+  '/account/notifications': typeof AppAccountNotificationsRoute
   '/account/sessions': typeof AppAccountSessionsRoute
   '/account/spending': typeof AppAccountSpendingRoute
   '/account/': typeof AppAccountIndexRoute
@@ -175,6 +203,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId/assets': typeof AppProjectsProjectIdTabsAssetsRoute
   '/projects/$projectId/brief': typeof AppProjectsProjectIdTabsBriefRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdTabsSettingsRoute
+  '/projects/$projectId/sharing': typeof AppProjectsProjectIdTabsSharingRoute
   '/projects/$projectId/': typeof AppProjectsProjectIdTabsIndexRoute
   '/projects/$projectId/videos/$videoId/': typeof AppProjectsProjectIdVideosVideoIdIndexRoute
   '/projects/$projectId/videos/$videoId/renders/$renderId': typeof AppProjectsProjectIdVideosVideoIdRendersRenderIdRoute
@@ -187,8 +216,11 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRoute
   '/admin': typeof AppAdminRoute
   '/connect': typeof AppConnectRoute
+  '/notifications': typeof AppNotificationsRoute
+  '/invite/$inviteId': typeof InviteInviteIdRoute
   '/review/$reviewId': typeof ReviewReviewIdRoute
   '/projects/$projectId': typeof AppProjectsProjectIdTabsIndexRoute
+  '/account/notifications': typeof AppAccountNotificationsRoute
   '/account/sessions': typeof AppAccountSessionsRoute
   '/account/spending': typeof AppAccountSpendingRoute
   '/account': typeof AppAccountIndexRoute
@@ -196,6 +228,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId/assets': typeof AppProjectsProjectIdTabsAssetsRoute
   '/projects/$projectId/brief': typeof AppProjectsProjectIdTabsBriefRoute
   '/projects/$projectId/settings': typeof AppProjectsProjectIdTabsSettingsRoute
+  '/projects/$projectId/sharing': typeof AppProjectsProjectIdTabsSharingRoute
   '/projects/$projectId/videos/$videoId': typeof AppProjectsProjectIdVideosVideoIdIndexRoute
   '/projects/$projectId/videos/$videoId/renders/$renderId': typeof AppProjectsProjectIdVideosVideoIdRendersRenderIdRoute
 }
@@ -210,8 +243,11 @@ export interface FileRoutesById {
   '/_app/account': typeof AppAccountRouteRouteWithChildren
   '/_app/admin': typeof AppAdminRoute
   '/_app/connect': typeof AppConnectRoute
+  '/_app/notifications': typeof AppNotificationsRoute
+  '/invite/$inviteId': typeof InviteInviteIdRoute
   '/review/$reviewId': typeof ReviewReviewIdRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRouteRouteWithChildren
+  '/_app/account/notifications': typeof AppAccountNotificationsRoute
   '/_app/account/sessions': typeof AppAccountSessionsRoute
   '/_app/account/spending': typeof AppAccountSpendingRoute
   '/_app/account/': typeof AppAccountIndexRoute
@@ -221,6 +257,7 @@ export interface FileRoutesById {
   '/_app/projects/$projectId/_tabs/assets': typeof AppProjectsProjectIdTabsAssetsRoute
   '/_app/projects/$projectId/_tabs/brief': typeof AppProjectsProjectIdTabsBriefRoute
   '/_app/projects/$projectId/_tabs/settings': typeof AppProjectsProjectIdTabsSettingsRoute
+  '/_app/projects/$projectId/_tabs/sharing': typeof AppProjectsProjectIdTabsSharingRoute
   '/_app/projects/$projectId/_tabs/': typeof AppProjectsProjectIdTabsIndexRoute
   '/_app/projects/$projectId/videos/$videoId/': typeof AppProjectsProjectIdVideosVideoIdIndexRoute
   '/_app/projects/$projectId/videos/$videoId/renders/$renderId': typeof AppProjectsProjectIdVideosVideoIdRendersRenderIdRoute
@@ -236,8 +273,11 @@ export interface FileRouteTypes {
     | '/account'
     | '/admin'
     | '/connect'
+    | '/notifications'
+    | '/invite/$inviteId'
     | '/review/$reviewId'
     | '/projects/$projectId'
+    | '/account/notifications'
     | '/account/sessions'
     | '/account/spending'
     | '/account/'
@@ -246,6 +286,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/assets'
     | '/projects/$projectId/brief'
     | '/projects/$projectId/settings'
+    | '/projects/$projectId/sharing'
     | '/projects/$projectId/'
     | '/projects/$projectId/videos/$videoId/'
     | '/projects/$projectId/videos/$videoId/renders/$renderId'
@@ -258,8 +299,11 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/admin'
     | '/connect'
+    | '/notifications'
+    | '/invite/$inviteId'
     | '/review/$reviewId'
     | '/projects/$projectId'
+    | '/account/notifications'
     | '/account/sessions'
     | '/account/spending'
     | '/account'
@@ -267,6 +311,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId/assets'
     | '/projects/$projectId/brief'
     | '/projects/$projectId/settings'
+    | '/projects/$projectId/sharing'
     | '/projects/$projectId/videos/$videoId'
     | '/projects/$projectId/videos/$videoId/renders/$renderId'
   id:
@@ -280,8 +325,11 @@ export interface FileRouteTypes {
     | '/_app/account'
     | '/_app/admin'
     | '/_app/connect'
+    | '/_app/notifications'
+    | '/invite/$inviteId'
     | '/review/$reviewId'
     | '/_app/projects/$projectId'
+    | '/_app/account/notifications'
     | '/_app/account/sessions'
     | '/_app/account/spending'
     | '/_app/account/'
@@ -291,6 +339,7 @@ export interface FileRouteTypes {
     | '/_app/projects/$projectId/_tabs/assets'
     | '/_app/projects/$projectId/_tabs/brief'
     | '/_app/projects/$projectId/_tabs/settings'
+    | '/_app/projects/$projectId/_tabs/sharing'
     | '/_app/projects/$projectId/_tabs/'
     | '/_app/projects/$projectId/videos/$videoId/'
     | '/_app/projects/$projectId/videos/$videoId/renders/$renderId'
@@ -303,6 +352,7 @@ export interface RootRouteChildren {
   ConsentRoute: typeof ConsentRoute
   DeviceRoute: typeof DeviceRoute
   SignInRoute: typeof SignInRoute
+  InviteInviteIdRoute: typeof InviteInviteIdRoute
   ReviewReviewIdRoute: typeof ReviewReviewIdRoute
 }
 
@@ -371,6 +421,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppConnectRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/notifications': {
+      id: '/_app/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof AppNotificationsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/invite/$inviteId': {
+      id: '/invite/$inviteId'
+      path: '/invite/$inviteId'
+      fullPath: '/invite/$inviteId'
+      preLoaderRoute: typeof InviteInviteIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/review/$reviewId': {
       id: '/review/$reviewId'
       path: '/review/$reviewId'
@@ -383,6 +447,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/account/'
       preLoaderRoute: typeof AppAccountIndexRouteImport
+      parentRoute: typeof AppAccountRouteRoute
+    }
+    '/_app/account/notifications': {
+      id: '/_app/account/notifications'
+      path: '/notifications'
+      fullPath: '/account/notifications'
+      preLoaderRoute: typeof AppAccountNotificationsRouteImport
       parentRoute: typeof AppAccountRouteRoute
     }
     '/_app/account/sessions': {
@@ -448,6 +519,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppProjectsProjectIdTabsSettingsRouteImport
       parentRoute: typeof AppProjectsProjectIdTabsRouteRoute
     }
+    '/_app/projects/$projectId/_tabs/sharing': {
+      id: '/_app/projects/$projectId/_tabs/sharing'
+      path: '/sharing'
+      fullPath: '/projects/$projectId/sharing'
+      preLoaderRoute: typeof AppProjectsProjectIdTabsSharingRouteImport
+      parentRoute: typeof AppProjectsProjectIdTabsRouteRoute
+    }
     '/_app/projects/$projectId/videos/$videoId': {
       id: '/_app/projects/$projectId/videos/$videoId'
       path: '/videos/$videoId'
@@ -473,12 +551,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppAccountRouteRouteChildren {
+  AppAccountNotificationsRoute: typeof AppAccountNotificationsRoute
   AppAccountSessionsRoute: typeof AppAccountSessionsRoute
   AppAccountSpendingRoute: typeof AppAccountSpendingRoute
   AppAccountIndexRoute: typeof AppAccountIndexRoute
 }
 
 const AppAccountRouteRouteChildren: AppAccountRouteRouteChildren = {
+  AppAccountNotificationsRoute: AppAccountNotificationsRoute,
   AppAccountSessionsRoute: AppAccountSessionsRoute,
   AppAccountSpendingRoute: AppAccountSpendingRoute,
   AppAccountIndexRoute: AppAccountIndexRoute,
@@ -492,6 +572,7 @@ interface AppProjectsProjectIdTabsRouteRouteChildren {
   AppProjectsProjectIdTabsAssetsRoute: typeof AppProjectsProjectIdTabsAssetsRoute
   AppProjectsProjectIdTabsBriefRoute: typeof AppProjectsProjectIdTabsBriefRoute
   AppProjectsProjectIdTabsSettingsRoute: typeof AppProjectsProjectIdTabsSettingsRoute
+  AppProjectsProjectIdTabsSharingRoute: typeof AppProjectsProjectIdTabsSharingRoute
   AppProjectsProjectIdTabsIndexRoute: typeof AppProjectsProjectIdTabsIndexRoute
 }
 
@@ -501,6 +582,7 @@ const AppProjectsProjectIdTabsRouteRouteChildren: AppProjectsProjectIdTabsRouteR
     AppProjectsProjectIdTabsBriefRoute: AppProjectsProjectIdTabsBriefRoute,
     AppProjectsProjectIdTabsSettingsRoute:
       AppProjectsProjectIdTabsSettingsRoute,
+    AppProjectsProjectIdTabsSharingRoute: AppProjectsProjectIdTabsSharingRoute,
     AppProjectsProjectIdTabsIndexRoute: AppProjectsProjectIdTabsIndexRoute,
   }
 
@@ -549,6 +631,7 @@ interface AppRouteChildren {
   AppAccountRouteRoute: typeof AppAccountRouteRouteWithChildren
   AppAdminRoute: typeof AppAdminRoute
   AppConnectRoute: typeof AppConnectRoute
+  AppNotificationsRoute: typeof AppNotificationsRoute
   AppProjectsProjectIdRouteRoute: typeof AppProjectsProjectIdRouteRouteWithChildren
   AppProjectsIndexRoute: typeof AppProjectsIndexRoute
 }
@@ -557,6 +640,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAccountRouteRoute: AppAccountRouteRouteWithChildren,
   AppAdminRoute: AppAdminRoute,
   AppConnectRoute: AppConnectRoute,
+  AppNotificationsRoute: AppNotificationsRoute,
   AppProjectsProjectIdRouteRoute: AppProjectsProjectIdRouteRouteWithChildren,
   AppProjectsIndexRoute: AppProjectsIndexRoute,
 }
@@ -570,6 +654,7 @@ const rootRouteChildren: RootRouteChildren = {
   ConsentRoute: ConsentRoute,
   DeviceRoute: DeviceRoute,
   SignInRoute: SignInRoute,
+  InviteInviteIdRoute: InviteInviteIdRoute,
   ReviewReviewIdRoute: ReviewReviewIdRoute,
 }
 export const routeTree = rootRouteImport

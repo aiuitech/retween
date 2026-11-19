@@ -11,6 +11,7 @@ import { runOp } from "../worker/ops/index.ts";
 import { INLINE_IMAGE } from "../worker/ops/registry.ts";
 import { type Averages, averages } from "../worker/services/averages.ts";
 import { markup } from "../worker/services/billing.ts";
+import { unreadCount } from "../worker/services/notifications.ts";
 import { budgetStatus } from "../worker/services/usage.ts";
 
 export interface Me {
@@ -20,8 +21,10 @@ export interface Me {
 	image: string | null;
 	isAdmin: boolean;
 	isSuperuser: boolean;
-	billing: "exempt" | "active" | "required" | "past_due";
+	billing: "exempt" | "active" | "required" | "guest" | "past_due";
 	banned: boolean;
+	/** Notifications not yet read. */
+	unread: number;
 	budget: {
 		monthlyBudgetUsd: number;
 		ownLimitUsd?: number;
@@ -46,6 +49,7 @@ export const getMe = createServerFn({ method: "GET" }).handler(async (): Promise
 		billing: actor.billing,
 		banned: actor.banned,
 		budget: await budgetStatus(actor),
+		unread: await unreadCount(actor.id),
 	};
 });
 

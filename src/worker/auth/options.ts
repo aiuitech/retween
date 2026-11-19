@@ -21,6 +21,8 @@ export interface AuthSettings {
 	database: BetterAuthOptions["database"];
 	/** Runs before a person deletes their own account: refuse by throwing, and remove what the database does not cascade to. */
 	beforeDeleteUser: (user: { id: string; email: string }) => Promise<void>;
+	/** Runs once a new account exists, e.g. to turn invitations to its address into access. */
+	afterCreateUser?: (user: { id: string; name: string; email: string; emailVerified: boolean }) => Promise<void>;
 	waitUntil?: (promise: Promise<unknown>) => void;
 }
 
@@ -90,6 +92,9 @@ export function authOptions(settings: AuthSettings) {
 								monthlyBudgetCents: settings.defaultMonthlyBudgetCents,
 							},
 						};
+					},
+					after: async (user) => {
+						await settings.afterCreateUser?.(user);
 					},
 				},
 			},

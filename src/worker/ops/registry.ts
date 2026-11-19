@@ -12,7 +12,7 @@
  * so adding an operation here makes it available everywhere at once.
  */
 import { z } from "zod";
-import type { Actor } from "../auth/index.ts";
+import { type Actor, assertNotGuest } from "../auth/index.ts";
 import { isTransient, withRetry } from "../lib/util.ts";
 
 export interface OpContext {
@@ -48,9 +48,12 @@ export function defineOp<Input extends z.ZodType, Output>(op: Op<Input, Output>)
  * only reads is tried again when our own infrastructure hiccups (a dropped D1
  * connection, a reset socket), so one blip does not reach the caller as an error.
  */
-export function invokeOp(op: Op, input: unknown, ctx: OpContext): Promise<unknown> {
-	if (!op.readOnly) return op.handler(input, ctx);
-	return withRetry(() => op.handler(input, ctx), { attempts: 3, baseDelayMs: 250, retryIf: isTransient });
+export async function invokeOp(op: Op, input: unknown, ctx: OpContext): Promise<unknown> {
+	if (op.paid) assertNotGuest(ctx.actor, "start paid work");
+	// What the operation may do in a shared project: viewers can run what only reads (and spends nothing).
+	const scoped: OpContext = { ...ctx, actor: { ...ctx.actor, access: op.readOnly && !op.paid ? "view" : "edit" } };
+	if (!op.readOnly) return op.handler(input, scoped);
+	return withRetry(() => op.handler(input, scoped), { attempts: 3, baseDelayMs: 250, retryIf: isTransient });
 }
 
 /** An image returned alongside an operation's JSON result (shown inline over MCP). */

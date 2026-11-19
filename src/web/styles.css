@@ -2230,3 +2230,48 @@ label.check {
 	padding: 10px 14px 12px;
 	font-size: 0.9rem;
 }
+
+/* --- sharing and notifications --- */
+.top nav .count.unread {
+	display: inline-block;
+	margin-left: 6px;
+	min-width: 18px;
+	padding: 0 6px;
+	border-radius: 999px;
+	background: var(--mark);
+	color: #fff;
+	font-size: 0.75rem;
+	font-weight: 600;
+	line-height: 18px;
+	text-align: center;
+	font-variant-numeric: tabular-nums;
+}
+.line .dot {
+	width: 8px;
+	height: 8px;
+	border-radius: 50%;
+	background: var(--blue);
+	flex: none;
+}
+.line .dot.read {
+	background: transparent;
+}
+.share-form {
+	display: flex;
+	gap: 10px;
+	flex-wrap: wrap;
+	align-items: flex-end;
+}
+.share-form .field-email {
+	flex: 1 1 260px;
+	min-width: 0;
+}
+.toggle-line {
+	display: flex;
+	gap: 14px;
+	align-items: flex-start;
+}
+.toggle-line input[type="checkbox"] {
+	margin-top: 4px;
+	flex: none;
+}

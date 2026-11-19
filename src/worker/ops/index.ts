@@ -11,11 +11,12 @@ import { inspectOps } from "./inspect.ts";
 import { projectOps } from "./projects.ts";
 import { type Op, invokeOp } from "./registry.ts";
 import { reviewOps } from "./reviews.ts";
+import { sharingOps } from "./sharing.ts";
 import { thumbnailOps } from "./thumbnails.ts";
 import { videoOps } from "./videos.ts";
 import { youtubeOps } from "./youtube.ts";
 
-export const ops: Op[] = [...projectOps, ...accountOps, ...billingOps, ...assetOps, ...footageOps, ...videoOps, ...inspectOps, ...thumbnailOps, ...reviewOps, ...youtubeOps, ...hostingOps, ...adminOps];
+export const ops: Op[] = [...projectOps, ...sharingOps, ...accountOps, ...billingOps, ...assetOps, ...footageOps, ...videoOps, ...inspectOps, ...thumbnailOps, ...reviewOps, ...youtubeOps, ...hostingOps, ...adminOps];
 const byName = new Map(ops.map((op) => [op.name, op]));
 
 /** Operations the actor is allowed to see. */

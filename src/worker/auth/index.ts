@@ -5,6 +5,7 @@ import { env, waitUntil } from "cloudflare:workers";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client.ts";
 import { AppError, forbidden } from "../lib/util.ts";
+import { acceptInvitesFor } from "../services/sharing.ts";
 import { deletePrefix } from "../services/storage.ts";
 import { API_KEY_PREFIX, authOptions } from "./options.ts";
 
@@ -31,6 +32,13 @@ export const auth = betterAuth(
 			for (const project of projects) await deletePrefix(`projects/${project.id}/`);
 			await db.delete(schema.apikey).where(eq(schema.apikey.referenceId, user.id));
 		},
+		afterCreateUser: async (user) => {
+			try {
+				await acceptInvitesFor(user);
+			} catch (error) {
+				console.error("could not accept invitations for a new account", error);
+			}
+		},
 	}),
 );
 
@@ -46,13 +54,20 @@ export interface Actor {
 	/**
 	 * exempt: an administrator, never billed. active: a payment method is on file.
 	 * required: no payment method yet, so the account cannot be used.
+	 * guest: no payment method yet, but projects are shared with the account: it can
+	 * work in them, but cannot create projects or start paid work until it adds one.
 	 * past_due: an invoice went unpaid; paid work is refused until it is settled.
 	 */
-	billing: "exempt" | "active" | "required" | "past_due";
+	billing: "exempt" | "active" | "required" | "guest" | "past_due";
 	banned: boolean;
 	monthlyBudgetCents: number;
 	/** How the caller authenticated. */
 	via: "session" | "api-key" | "oauth" | "upload-link";
+	/**
+	 * Set while an operation runs: "view" for operations that only read, so a
+	 * project's viewers may run them (see getProject). Absent means "edit".
+	 */
+	access?: "view" | "edit";
 }
 
 type UserRow = typeof schema.user.$inferSelect;
@@ -75,7 +90,24 @@ function toActor(user: UserRow, via: Actor["via"]): Actor {
 
 export async function actorById(userId: string, via: Actor["via"]): Promise<Actor | null> {
 	const user = await db.query.user.findFirst({ where: eq(schema.user.id, userId) });
-	return user ? toActor(user, via) : null;
+	if (!user) return null;
+	const actor = toActor(user, via);
+	if (actor.billing === "required") {
+		// An account without a payment method can still work in projects shared with it.
+		const shared = await db.query.projectMembers.findFirst({ where: eq(schema.projectMembers.userId, user.id), columns: { projectId: true } });
+		if (shared) actor.billing = "guest";
+	}
+	return actor;
+}
+
+/** Refuses what an account without a payment method cannot do, even in projects shared with it. */
+export function assertNotGuest(actor: Actor, what = "do that"): void {
+	if (actor.billing !== "guest") return;
+	throw new AppError(
+		402,
+		`Add a payment method at ${env.APP_URL}/billing to ${what}. Working in projects shared with you is free; paid work is billed to whoever starts it.`,
+		"billing_required",
+	);
 }
 
 /** Resolves a browser session cookie, a CLI session token, or an API key. */

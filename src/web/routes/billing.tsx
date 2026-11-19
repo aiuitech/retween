@@ -13,7 +13,8 @@ export const Route = createFileRoute("/billing")({
 	}),
 	beforeLoad: ({ context }) => {
 		if (!context.me) throw redirect({ to: "/sign-in", search: { redirect: "/billing" } });
-		if (context.me.billing !== "required" && !context.me.banned) throw redirect({ to: "/projects" });
+		// Guests (people working in projects shared with them) come here to add one of their own.
+		if (context.me.billing !== "required" && context.me.billing !== "guest" && !context.me.banned) throw redirect({ to: "/projects" });
 		return { me: context.me };
 	},
 	head: () => ({ meta: [{ title: "Set up billing · Retween" }] }),
@@ -51,10 +52,22 @@ function Billing() {
 				<a className="btn" href="/api/billing/setup">
 					{state === "processing" ? "Add a different payment method" : "Add a payment method"}
 				</a>
-				<button type="button" className="btn quiet" onClick={() => void signOut()}>
-					Sign out
-				</button>
+				{me.billing === "guest" ? (
+					<a className="btn quiet" href="/projects">
+						Back to shared projects
+					</a>
+				) : (
+					<button type="button" className="btn quiet" onClick={() => void signOut()}>
+						Sign out
+					</button>
+				)}
 			</div>
+			{me.billing === "guest" && (
+				<p className="soft" style={{ marginTop: 14 }}>
+					Working in projects shared with you is free. A payment method lets you create projects of your own and generate, render and publish: what you start is
+					billed to you.
+				</p>
+			)}
 			<p className="soft" style={{ marginTop: 14 }}>
 				Payments are handled by Stripe. Retween never sees your card number.
 			</p>

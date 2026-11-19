@@ -12,6 +12,8 @@ const renderer = defineContainer({
 });
 
 const ACCOUNT_ID = "797ac9a450f9bde8b6f44e405394b59b";
+/** Where invitations and notifications come from. */
+const EMAIL_FROM = "notifications@retween.app";
 
 export default defineConfig(({ mode }) => {
 	const dev = mode === "development";
@@ -59,6 +61,12 @@ export default defineConfig(({ mode }) => {
 				HOSTING_WORKFLOW: bindings.workflow({ name: "retween-hosting", worker: WORKER, exportName: "HostingWorkflow" }),
 				/** Hosted videos (services/hosting.ts): copies of renders played from /v/<id> and /embed/<id>. */
 				STREAM: bindings.stream(),
+				/**
+				 * Cloudflare Email Sending (services/email.ts): invitations and notifications. The sender's domain has to be
+				 * onboarded to Email Sending first. Locally, sent messages are written to the dev server's log instead.
+				 */
+				EMAIL: bindings.sendEmail({ allowedSenderAddresses: [EMAIL_FROM] }),
+				EMAIL_FROM: bindings.text(EMAIL_FROM),
 
 				BETTER_AUTH_SECRET: bindings.secret(),
 				GOOGLE_CLIENT_ID: bindings.secret(),

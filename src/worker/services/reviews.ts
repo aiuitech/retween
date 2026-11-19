@@ -10,7 +10,7 @@
  * or finding them flagged on video.get and in the project brief), mapped to
  * scenes, with what was on screen and said at each moment.
  */
-import { env } from "cloudflare:workers";
+import { env, waitUntil } from "cloudflare:workers";
 import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { clock, round2, sceneAt } from "../../../shared/inspect.ts";
 import type { Scene } from "../../../shared/storyboard.ts";
@@ -20,7 +20,9 @@ import { db, schema } from "../db/client.ts";
 import type { ReviewScene, ReviewTag, ReviewVerdict } from "../db/schema.ts";
 import { AppError, badRequest, bytesToBase64, newId, notFound, sha256Hex } from "../lib/util.ts";
 import { draftKey, draftStatus, inspectTimeline, startDraft } from "./inspect.ts";
-import type { Project } from "./projects.ts";
+import { notify } from "./notifications.ts";
+import { type Project, roleOf } from "./projects.ts";
+import { editorsOf } from "./sharing.ts";
 import { signedUrl } from "./storage.ts";
 import { posterFor } from "./thumbnails.ts";
 import type { Video } from "./videos.ts";
@@ -57,13 +59,17 @@ function same(a: string, b: string): boolean {
 
 /**
  * The review a page is asking for, if the asker may see it: they hold the
- * link's token, or they are the signed-in owner.
+ * link's token, or they are signed in and the project is theirs or shared with them.
  */
 export async function reviewFor(reviewId: string, access: { token?: string; userId?: string }): Promise<Review | null> {
 	const review = await db.query.reviews.findFirst({ where: eq(schema.reviews.id, reviewId) });
 	if (!review) return null;
-	if (access.userId && access.userId === review.userId) return review;
 	if (access.token && same(access.token, await reviewToken(review.id))) return review;
+	if (access.userId) {
+		if (access.userId === review.userId) return review;
+		const project = await db.query.projects.findFirst({ where: eq(schema.projects.id, review.projectId), columns: { id: true, ownerId: true } });
+		if (project && (await roleOf(access.userId, project))) return review;
+	}
 	return null;
 }
 
@@ -321,6 +327,24 @@ export async function submitReview(review: Review, input: { comments: CommentInp
 			submittedAt: new Date(),
 		})
 		.where(and(eq(schema.reviews.id, review.id), eq(schema.reviews.status, "open")));
+	waitUntil(announceReview(review, { verdict: input.verdict, notes: rows.length, summary: input.summary?.trim(), reviewerName: input.reviewerName?.trim() }));
+}
+
+/** Tells whoever asked for the review, and everyone who can edit the project, that the notes are in. */
+async function announceReview(review: Review, sent: { verdict: ReviewVerdict; notes: number; summary?: string; reviewerName?: string }) {
+	const video = await db.query.videos.findFirst({ where: eq(schema.videos.id, review.videoId), columns: { title: true } });
+	const who = sent.reviewerName || "Your reviewer";
+	const notes = sent.notes === 1 ? "1 note" : `${sent.notes} notes`;
+	const title = sent.verdict === "approved" ? `${who} approved ${video?.title ?? "a video"}` : `${who} asked for changes to ${video?.title ?? "a video"}`;
+	await notify({
+		to: [review.userId, ...(await editorsOf(review.projectId))],
+		kind: "review.submitted",
+		title,
+		body: [`Round ${review.round}, ${notes}.`, sent.summary ? `"${sent.summary.slice(0, 600)}"` : ""].filter(Boolean).join(" "),
+		link: `/review/${review.id}`,
+		projectId: review.projectId,
+		emailAction: "Read the notes",
+	});
 }
 
 // --- the agent's side -----------------------------------------------------------------

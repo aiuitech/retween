@@ -8,6 +8,7 @@ import { eq } from "drizzle-orm";
 import { db, schema } from "../db/client.ts";
 import type { RenderStatus } from "../db/schema.ts";
 import { rendererFetch, stopRenderer } from "../renderer.ts";
+import { notify } from "../services/notifications.ts";
 import { renderProps } from "../services/renders.ts";
 import { renderKey } from "../services/storage.ts";
 import { posterFrame, posterKey } from "../services/thumbnails.ts";
@@ -29,6 +30,32 @@ interface RendererStatus {
 const tidy = (warnings: string[] = []) => warnings.slice(0, 20).map((warning) => warning.replace(/\?[^\s"')]+/g, "").slice(0, 300));
 
 const loadRender = (renderId: string) => db.query.renders.findFirst({ where: eq(schema.renders.id, renderId) });
+
+/** Tells whoever started an export that it finished or failed. Never throws: the export is what matters. */
+async function announce(renderId: string) {
+	try {
+		await tell(renderId);
+	} catch (error) {
+		console.warn("could not announce render", renderId, error instanceof Error ? error.message : error);
+	}
+}
+
+async function tell(renderId: string) {
+	const render = await loadRender(renderId);
+	if (!render || (render.status !== "done" && render.status !== "failed")) return;
+	const video = await db.query.videos.findFirst({ where: eq(schema.videos.id, render.videoId), columns: { title: true } });
+	const shape = `${render.aspect} ${render.height}p`;
+	const done = render.status === "done";
+	await notify({
+		to: [render.createdBy],
+		kind: done ? "render.finished" : "render.failed",
+		title: done ? `${video?.title ?? "Your video"} (${shape}) is ready` : `The ${shape} export of ${video?.title ?? "your video"} failed`,
+		body: done ? "The export is ready to download, publish or host." : (render.error ?? undefined)?.slice(0, 400),
+		link: `/projects/${render.projectId}/videos/${render.videoId}/renders/${render.id}`,
+		projectId: render.projectId,
+		emailAction: done ? "Open the export" : "See what happened",
+	});
+}
 const update = (renderId: string, values: Partial<typeof schema.renders.$inferInsert>) =>
 	db.update(schema.renders).set(values).where(eq(schema.renders.id, renderId));
 
@@ -153,6 +180,7 @@ export class RenderWorkflow extends WorkflowEntrypoint<Env, RenderParams> {
 					console.warn("could not take a poster still", renderId, error instanceof Error ? error.message : error);
 				}
 			});
+			await step.do("notify", { retries: { limit: 0, delay: "1 second" } }, () => announce(renderId));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			await step.do("mark failed", async () => {
@@ -160,6 +188,7 @@ export class RenderWorkflow extends WorkflowEntrypoint<Env, RenderParams> {
 				const status: RenderStatus = render?.status === "cancelled" ? "cancelled" : "failed";
 				await update(renderId, { status, error: message.slice(0, 1000), finishedAt: new Date() });
 			});
+			await step.do("notify", { retries: { limit: 0, delay: "1 second" } }, () => announce(renderId));
 		} finally {
 			await step.do("stop renderer", () => stopRenderer(renderId));
 		}
